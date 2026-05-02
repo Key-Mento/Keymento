@@ -1,5 +1,8 @@
-# src/score_loader.py
+# src/midi_loader.py
+from collections import defaultdict, deque
+
 import mido
+
 
 def load_score(midi_path):
     """
@@ -14,38 +17,38 @@ def load_score(midi_path):
     # 기본 tempo (120 BPM = 500000 microseconds per beat)
     tempo = 500000
     
-    # 모든 트랙을 시간순으로 합쳐서 처리
     notes = []
-    note_on_dict = {}  # 진행 중인 note 추적
+    note_on_dict = defaultdict(deque)  # 진행 중인 note 추적
+    abs_time = 0.0
     
-    for track in mid.tracks:
-        abs_time = 0.0  # 트랙 시작부터 누적된 시간 (초)
+    # 모든 트랙을 병합해야 type 1 MIDI의 tempo track이 노트 시간에 올바르게 반영된다.
+    for msg in mido.merge_tracks(mid.tracks):
+        # tick 시간을 초 단위로 누적
+        abs_time += mido.tick2second(msg.time, mid.ticks_per_beat, tempo)
         
-        for msg in track:
-            # tick 시간을 초 단위로 누적
-            abs_time += mido.tick2second(msg.time, mid.ticks_per_beat, tempo)
-            
-            if msg.type == 'set_tempo':
-                tempo = msg.tempo  # tempo 변경 반영
-            
-            elif msg.type == 'note_on' and msg.velocity > 0:
-                # 노트 시작
-                note_on_dict[msg.note] = {
-                    'note': msg.note,
-                    'time': abs_time,
-                    'velocity': msg.velocity
-                }
-            
-            elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                # 노트 종료 — 시작 시각과 매칭하여 duration 계산
-                if msg.note in note_on_dict:
-                    start = note_on_dict.pop(msg.note)
-                    notes.append({
-                        'note': start['note'],
-                        'time': start['time'],
-                        'velocity': start['velocity'],
-                        'duration': abs_time - start['time']
-                    })
+        if msg.type == 'set_tempo':
+            tempo = msg.tempo  # tempo 변경 반영
+        
+        elif msg.type == 'note_on' and msg.velocity > 0:
+            # 노트 시작
+            key = (getattr(msg, 'channel', 0), msg.note)
+            note_on_dict[key].append({
+                'note': msg.note,
+                'time': abs_time,
+                'velocity': msg.velocity
+            })
+        
+        elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+            # 노트 종료 — 시작 시각과 매칭하여 duration 계산
+            key = (getattr(msg, 'channel', 0), msg.note)
+            if note_on_dict[key]:
+                start = note_on_dict[key].popleft()
+                notes.append({
+                    'note': start['note'],
+                    'time': start['time'],
+                    'velocity': start['velocity'],
+                    'duration': abs_time - start['time']
+                })
     
     # 시간순 정렬
     notes.sort(key=lambda n: n['time'])
@@ -67,12 +70,15 @@ if __name__ == "__main__":
     import sys
     from collections import Counter
     
-    midi_path = sys.argv[1] if len(sys.argv) > 1 else "songs/twinkle.mid"
+    midi_path = sys.argv[1] if len(sys.argv) > 1 else "songs/mario.mid"
     
     print(f"파일: {midi_path}")
     print("=" * 60)
     
     notes, bpm = load_score(midi_path)
+    if not notes:
+        print("노트가 없습니다")
+        sys.exit()
     
     # 기본 정보
     print(f"BPM: {bpm}")

@@ -15,7 +15,8 @@ class KeyboardCalibrator:
     
     # 건반 구조 (한 옥타브 = 흰건 7개)
     # 흑건이 있는 흰건 위치 (옥타브 내 인덱스): C(0), D(1), F(3), G(4), A(5)
-    BLACK_KEY_AFTER = [0, 1, 3, 4, 5]
+    WHITE_PITCH_CLASSES = {0, 2, 4, 5, 7, 9, 11}
+    BLACK_PITCH_CLASSES = {1, 3, 6, 8, 10}
     
     def __init__(self, num_white_keys=14, start_note=60):
         """
@@ -34,6 +35,20 @@ class KeyboardCalibrator:
         if event == cv2.EVENT_LBUTTONDOWN and len(self.corners) < 4:
             self.corners.append((x, y))
             print(f"  점 {len(self.corners)}/4: ({x}, {y})")
+
+    @staticmethod
+    def _is_window_closed(window_name):
+        try:
+            return cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1
+        except cv2.error:
+            return True
+
+    @staticmethod
+    def _destroy_window(window_name):
+        try:
+            cv2.destroyWindow(window_name)
+        except cv2.error:
+            pass
     
     def calibrate(self, cap):
         """
@@ -45,6 +60,10 @@ class KeyboardCalibrator:
         Returns:
             성공 시 True, 사용자 취소 시 False
         """
+        if hasattr(cap, "isOpened") and not cap.isOpened():
+            print("웹캠을 열 수 없습니다")
+            return False
+
         self.corners = []
         window_name = "Calibration - Click 4 corners (TL -> TR -> BR -> BL)"
         cv2.namedWindow(window_name)
@@ -58,10 +77,24 @@ class KeyboardCalibrator:
         print("  4. 건반 영역 좌하단")
         print("  R: 다시 시작 | ENTER: 확정 | ESC: 취소\n")
         
+        failed_reads = 0
+        max_failed_reads = 30
+
         while True:
             ret, frame = cap.read()
             if not ret:
+                failed_reads += 1
+                if failed_reads >= max_failed_reads:
+                    print("웹캠 프레임을 읽을 수 없습니다")
+                    self._destroy_window(window_name)
+                    return False
+                key = cv2.waitKey(30) & 0xFF
+                if key == 27 or self._is_window_closed(window_name):
+                    self._destroy_window(window_name)
+                    return False
                 continue
+
+            failed_reads = 0
             
             display = frame.copy()
             
@@ -94,8 +127,11 @@ class KeyboardCalibrator:
             cv2.imshow(window_name, display)
             
             key = cv2.waitKey(1) & 0xFF
+            if self._is_window_closed(window_name):
+                self._destroy_window(window_name)
+                return False
             if key == 27:  # ESC
-                cv2.destroyWindow(window_name)
+                self._destroy_window(window_name)
                 return False
             elif key == ord('r') or key == ord('R'):
                 self.corners = []
@@ -103,32 +139,35 @@ class KeyboardCalibrator:
             elif key == 13 and len(self.corners) == 4:  # ENTER
                 self.preview_frame = frame.copy()
                 self._compute_key_regions()
-                cv2.destroyWindow(window_name)
+                self._destroy_window(window_name)
                 return True
     
     def _compute_key_regions(self):
         """4 꼭짓점으로부터 각 건반의 좌표를 계산"""
+        if len(self.corners) != 4:
+            raise ValueError("건반 영역을 계산하려면 꼭짓점 4개가 필요합니다")
+        if self.num_white_keys <= 0:
+            raise ValueError("num_white_keys는 1 이상이어야 합니다")
+        if self.start_note % 12 in self.BLACK_PITCH_CLASSES:
+            raise ValueError("start_note는 가장 왼쪽 흰건의 MIDI 노트여야 합니다")
+
+        self.key_regions.clear()
         tl, tr, br, bl = [np.array(p, dtype=np.float32) for p in self.corners]
         
         # 흰건 영역 분할
         white_top_step = (tr - tl) / self.num_white_keys
         white_bot_step = (br - bl) / self.num_white_keys
         
-        # 옥타브 내 흰건 인덱스 → MIDI 노트 오프셋 매핑
-        # 0=C, 1=D, 2=E, 3=F, 4=G, 5=A, 6=B
-        white_offsets = [0, 2, 4, 5, 7, 9, 11]
-        
-        # 흑건의 MIDI 오프셋 (C# D# F# G# A#)
-        black_offsets = {0: 1, 1: 3, 3: 6, 4: 8, 5: 10}
-        
-        white_idx_to_note = []
+        white_notes = []
+        note = self.start_note
+        while len(white_notes) < self.num_white_keys:
+            if note % 12 in self.WHITE_PITCH_CLASSES:
+                white_notes.append(note)
+            note += 1
         
         # 흰건 좌표 계산
         for i in range(self.num_white_keys):
-            octave = i // 7
-            within = i % 7
-            note = self.start_note + octave * 12 + white_offsets[within]
-            white_idx_to_note.append(note)
+            note = white_notes[i]
             
             p1 = tl + white_top_step * i
             p2 = tl + white_top_step * (i + 1)
@@ -147,12 +186,12 @@ class KeyboardCalibrator:
         black_width_ratio = 0.6
         
         for i in range(self.num_white_keys - 1):
-            within = i % 7
-            if within not in self.BLACK_KEY_AFTER:
+            current_white_note = white_notes[i]
+            next_white_note = white_notes[i + 1]
+            if next_white_note - current_white_note != 2:
                 continue
             
-            octave = i // 7
-            black_note = self.start_note + octave * 12 + black_offsets[within]
+            black_note = current_white_note + 1
             
             # 흰건 i와 i+1 사이의 경계선
             top_boundary = tl + white_top_step * (i + 1)
@@ -183,32 +222,40 @@ class KeyboardCalibrator:
         Args:
             frame: 그릴 프레임
             highlight_notes: 강조할 MIDI 노트 set (None이면 모두 외곽선만)
-            alpha: 채우기 투명도
+            alpha: 채우기 투명도 (0이면 불투명, 1이면 투명)
         """
         if highlight_notes is None:
             highlight_notes = set()
+        else:
+            highlight_notes = set(highlight_notes)
         
         overlay = frame.copy()
+        result = frame.copy()
+        fill_opacity = max(0.0, min(1.0, 1 - alpha))
+        frame_opacity = 1.0 - fill_opacity
         
         for note, pts in self.key_regions.items():
             pts_np = np.array(pts, dtype=np.int32)
-            
-            is_black = (note % 12) in [1, 3, 6, 8, 10]
-            
             if note in highlight_notes:
-                color = (0, 200, 0)
-                cv2.fillPoly(overlay, [pts_np], color)
-            else:
-                # 외곽선만
-                color = (180, 180, 180) if not is_black else (60, 60, 60)
-            
-            cv2.polylines(frame, [pts_np], True, color, 1)
+                cv2.fillPoly(overlay, [pts_np], (0, 200, 0))
         
-        return cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+        result = cv2.addWeighted(overlay, fill_opacity, result, frame_opacity, 0)
+
+        for note, pts in self.key_regions.items():
+            pts_np = np.array(pts, dtype=np.int32)
+            is_black = (note % 12) in self.BLACK_PITCH_CLASSES
+            color = (0, 200, 0) if note in highlight_notes else (
+                (180, 180, 180) if not is_black else (60, 60, 60)
+            )
+            cv2.polylines(result, [pts_np], True, color, 1)
+
+        return result
     
     def save(self, path="data/calibration.json"):
         """캘리브레이션 결과를 파일로 저장"""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         data = {
             'corners': self.corners,
             'num_white_keys': self.num_white_keys,
@@ -257,12 +304,13 @@ if __name__ == "__main__":
         
         highlight = set()
         white_notes = sorted([n for n in calib.key_regions.keys() 
-                              if n % 12 not in [1, 3, 6, 8, 10]])
+                              if n % 12 not in calib.BLACK_PITCH_CLASSES])
         
         while True:
             ret, frame = cap.read()
             if not ret:
-                continue
+                print("웹캠 프레임을 읽을 수 없습니다")
+                break
             
             display = calib.draw_keys(frame, highlight)
             cv2.putText(display, "Press 1-7 to highlight white keys, Q to quit",
@@ -270,7 +318,7 @@ if __name__ == "__main__":
             cv2.imshow("Calibration Preview", display)
             
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+            if key == ord('q') or calib._is_window_closed("Calibration Preview"):
                 break
             elif ord('1') <= key <= ord('7'):
                 idx = key - ord('1')
