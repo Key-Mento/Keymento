@@ -144,9 +144,9 @@ class KeyboardCalibrator:
 
 # ── 직접 실행 시: 캘리브레이션 + 결과 미리보기 ─────────────────────────────────
 
-def main() -> int:
+def main(camera_index: int = 1) -> int:
     # 웹캠 열기 (CAP_DSHOW: Windows에서 딜레이 줄이는 백엔드)
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 

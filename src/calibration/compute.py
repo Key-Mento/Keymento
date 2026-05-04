@@ -76,6 +76,7 @@ def compute_key_regions(
 
     white_notes = white_notes_sequence(start_note, num_white_keys)
 
+    
     # 4점을 numpy 벡터로 변환 (소수점 연산을 위해 float32)
     tl, tr, br, bl = [np.array(p, dtype=np.float32) for p in corners]
 
