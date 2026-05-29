@@ -1,6 +1,6 @@
 """UDP MIDI event transport for the Keymento pi_midi module.
 
-Packet format (14 bytes):
+Packet format (16 bytes):
   MAGIC (4B) + event_type (1B) + note (1B) + velocity (1B) + padding (1B) + timestamp (8B double)
 """
 

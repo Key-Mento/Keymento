@@ -30,7 +30,10 @@ class MidiReceiver:
         self._sock: Optional[socket.socket] = None
 
     def start(self) -> None:
+        if self._running:
+            return
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((self.host, self.port))
         self._sock.settimeout(0.5)
         self._running = True
@@ -39,10 +42,12 @@ class MidiReceiver:
 
     def stop(self) -> None:
         self._running = False
-        if self._thread:
-            self._thread.join(timeout=2.0)
         if self._sock:
             self._sock.close()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        self._sock = None
+        self._thread = None
 
     def get_event(self, timeout: float = 0.01) -> Optional[MidiEvent]:
         try:
