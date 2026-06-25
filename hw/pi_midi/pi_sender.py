@@ -72,6 +72,8 @@ def main() -> None:
             msg = midi_in.get_message()
             if msg:
                 message, _ = msg
+                if len(message) < 3:
+                    continue
                 status, note, velocity = message[0], message[1], message[2]
 
                 if status & 0xF0 == 0x90 and velocity > 0:
@@ -98,6 +100,7 @@ def main() -> None:
         print("\n전송 종료.")
     finally:
         midi_in.close_port()
+        midi_in.delete()
         sock.close()
 
 
