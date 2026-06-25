@@ -18,21 +18,14 @@ SEQUENCE = [
     for i, (is_white, key_idx) in enumerate(_RAW_SEQUENCE)
 ]
 
-_start_time = None   # render() 호출
+_start_time = None 
 
 
 def _get_alpha_and_color(elapsed: float) -> tuple[float, tuple[int, int, int]]:
-    """
-    elapsed: 해당 음의 애니메이션 시작 후 경과 시간 (0 ~ DURATION)
-    반환: (alpha 0~1, BGR color)
 
-    0.0s  → 투명
-    0.5s → 진한 초록  (peak)
-    1.0s  → 투명
-    """
     t = min(elapsed / DURATION, 1.0)   # 0.0 ~ 1.0
 
-    # 0→0.5 : fade-in,  0.5→1.0 : fade-out
+    # 0→0.5 : fade-in,  0.5→1.0 : fade-out (0.5s일 때 peak)
     phase = t / 0.5 if t < 0.5 else (1.0 - t) / 0.5  
 
     # 연두 (50, 255, 154) ─→ 진한 초록 (0, 200, 0)  
