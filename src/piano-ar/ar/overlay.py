@@ -1,71 +1,126 @@
 import cv2
 import time
 
-# 테스트용 키 순서 (순서대로 애니메이션)
-TEST_WHITE = [10, 11, 12]
-TEST_BLACK = [0, 1, 2]
 
-DURATION = 1.0      # 각 음 애니메이션 길이 (초)
-INTERVAL = 1.0      # 다음 음까지 간격 (초)
+BASE_MIDI_NOTE = 60
+MIN_VISIBLE_DURATION = 0.25
 
-# 시퀀스: (is_white, key_index, start_time_offset)
-_RAW_SEQUENCE = (
-    [(True,  k) for k in TEST_WHITE] +
-    [(False, k) for k in TEST_BLACK]
-)
-SEQUENCE = [
-    (is_white, key_idx, i * INTERVAL)
-    for i, (is_white, key_idx) in enumerate(_RAW_SEQUENCE)
+WHITE_STEPS = {
+    0: 0,
+    2: 1,
+    4: 2,
+    5: 3,
+    7: 4,
+    9: 5,
+    11: 6,
+}
+BLACK_STEPS = {
+    1: 0,
+    3: 1,
+    6: 2,
+    8: 3,
+    10: 4,
+}
+
+TEST_SEQUENCE = [
+    {"note": 60, "time": 0.0, "duration": 1.0},
+    {"note": 62, "time": 1.0, "duration": 1.0},
+    {"note": 64, "time": 2.0, "duration": 1.0},
 ]
 
-_start_time = None 
+_start_time = None
 
 
-def _get_alpha_and_color(elapsed: float) -> tuple[float, tuple[int, int, int]]:
+def _midi_note_to_key(note):
+    offset = note - BASE_MIDI_NOTE
 
-    t = min(elapsed / DURATION, 1.0)   # 0.0 ~ 1.0
+    if offset < 0:
+        return None
 
-    # 0→0.5 : fade-in,  0.5→1.0 : fade-out (0.5s일 때 peak)
-    phase = t / 0.5 if t < 0.5 else (1.0 - t) / 0.5  
+    octave = offset // 12
+    semitone = offset % 12
 
-    # 연두 (50, 255, 154) ─→ 진한 초록 (0, 200, 0)  
-    b = int(50  * (1 - phase))
+    if semitone in WHITE_STEPS:
+        return True, octave * 7 + WHITE_STEPS[semitone]
+
+    if semitone in BLACK_STEPS:
+        return False, octave * 5 + BLACK_STEPS[semitone]
+
+    return None
+
+
+def _get_alpha_and_color(progress):
+    fade = 0.25
+
+    if progress < fade:
+        phase = progress / fade
+    elif progress > 1.0 - fade:
+        phase = (1.0 - progress) / fade
+    else:
+        phase = 1.0
+
+    phase = max(0.0, min(phase, 1.0))
+
+    b = int(50 * (1 - phase))
     g = int(255 * (1 - phase) + 200 * phase)
     r = int(154 * (1 - phase))
+
     return phase, (b, g, r)
 
 
-def render(frame, whites, blacks):
+def _draw_note(output, key, is_white, progress):
+    x1, y1, x2, y2 = key
+    cx = int((x1 + x2) / 2)
+    cy = int(y1 + (y2 - y1) * 0.75) if is_white else int((y1 + y2) / 2)
+
+    key_w = x2 - x1
+    key_h = y2 - y1
+    radius = int(min(key_w, key_h) * (0.22 if is_white else 0.25))
+
+    alpha, color = _get_alpha_and_color(progress)
+
+    layer = output.copy()
+    cv2.circle(layer, (cx, cy), radius, color, -1)
+    cv2.addWeighted(layer, alpha, output, 1.0 - alpha, 0, output)
+
+
+def render(frame, whites, blacks, notes=None, playback_time=None):
     global _start_time
+
     if _start_time is None:
         _start_time = time.time()
 
-    now = time.time()
-    elapsed_total = now - _start_time
+    if playback_time is None:
+        playback_time = time.time() - _start_time
+
+    if notes is None:
+        notes = TEST_SEQUENCE
 
     output = frame.copy()
 
-    for is_white, key_idx, offset in SEQUENCE:
-        anim_elapsed = elapsed_total - offset
-        if anim_elapsed < 0 or anim_elapsed > DURATION:
-            continue   # 아직 시작 전 or 이미 끝남
+    for note_event in notes:
+        start_time = float(note_event.get("time", 0.0))
+        duration = max(
+            float(note_event.get("duration", 0.0)),
+            MIN_VISIBLE_DURATION
+        )
+        elapsed = playback_time - start_time
 
+        if elapsed < 0 or elapsed > duration:
+            continue
+
+        key_ref = _midi_note_to_key(int(note_event["note"]))
+
+        if key_ref is None:
+            continue
+
+        is_white, key_idx = key_ref
         keys = whites if is_white else blacks
+
         if key_idx >= len(keys):
             continue
 
-        x1, y1, x2, y2 = keys[key_idx]
-        cx = int((x1 + x2) / 2)
-        cy = int(y1 + (y2 - y1) * 0.75) if is_white else int((y1 + y2) / 2)
-
-        key_w = x2 - x1
-        key_h = y2 - y1
-        r = int(min(key_w, key_h) * (0.22 if is_white else 0.25))
-
-        alpha, color = _get_alpha_and_color(anim_elapsed)
-
-        layer = output.copy()
-        cv2.circle(layer, (cx, cy), r, color, -1)
-        cv2.addWeighted(layer, alpha, output, 1.0 - alpha, 0, output)
+        progress = elapsed / duration
+        _draw_note(output, keys[key_idx], is_white, progress)
 
     return output

@@ -358,6 +358,82 @@ def manual_calibrate(cap):
     return result
 
 
+def calibrate(cap):
+    """Return calibration points for the AR loop.
+
+    Saved points are reused immediately. If there are no saved points, this
+    waits for either ArUco IDs 0, 1, 2, 3 or a manual calibration request.
+    """
+    calibration_points = load_points()
+
+    if calibration_points is not None:
+        return calibration_points
+
+    detector = create_aruco_detector()
+    window_name = "Initial Calibration"
+    cv2.namedWindow(window_name)
+
+    print("No saved calibration points found.")
+    print("Show ArUco markers ID 0, 1, 2, 3 or press M for manual setup.")
+    print("ESC: cancel")
+
+    while True:
+        ret, frame = cap.read()
+
+        if not ret:
+            print("Failed to read camera frame")
+            break
+
+        detected_points = detect_aruco_points(
+            frame,
+            detector
+        )
+
+        valid_aruco = (
+            detected_points is not None
+            and validate_points(detected_points)
+        )
+
+        if valid_aruco:
+            calibration_points = detected_points.copy()
+            save_points(calibration_points)
+            print("Initial ArUco calibration completed")
+            print(calibration_points)
+            cv2.destroyWindow(window_name)
+            return calibration_points
+
+        display = draw_main_screen(
+            frame,
+            detected_points,
+            None,
+            "Show ArUco markers or press M",
+            (0, 0, 255),
+            0,
+            True
+        )
+
+        cv2.imshow(
+            window_name,
+            display
+        )
+
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == 27:
+            break
+
+        if key in (ord("m"), ord("M")):
+            manual_result = manual_calibrate(cap)
+
+            if manual_result is not None:
+                cv2.destroyWindow(window_name)
+                return manual_result
+
+    cv2.destroyWindow(window_name)
+
+    return None
+
+
 def create_aruco_detector():
     """ArUco 마커 검출기를 생성한다."""
     aruco_dict = cv2.aruco.getPredefinedDictionary(
