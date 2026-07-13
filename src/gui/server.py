@@ -5,8 +5,8 @@ PC 에서 실행하고, 같은 네트워크의 브라우저(PC/태블릿/폰)에
 http://<PC-IP>:8321/ 으로 접속한다.
 
 실행:
-    python src\\webui\\server.py
-    python src\\webui\\server.py --countdown 10 --midi-port 1
+    python src\\gui\\server.py
+    python src\\gui\\server.py --countdown 10 --midi-port 1
 
 API:
     GET  /            UI 페이지

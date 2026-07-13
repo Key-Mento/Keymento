@@ -15,7 +15,7 @@ Keymento 의 다른 부품들은 각자 자기 일만 안다 — 판정 규칙
 저수준 부품들은 자신이 어떤 UI 에서 쓰이는지 몰라도 된다.
 
 ■ 호출자와의 관계
-  - webui/server.py 가 세션을 백그라운드 스레드로 띄울 때의 진입점.
+  - gui/server.py 가 세션을 백그라운드 스레드로 띄울 때의 진입점.
     on_event 콜백으로 진행 이벤트(countdown/start/note/done/aborted)를
     받고, stop_event(threading.Event)를 set 해 세션을 중단시킨다.
   - `python session.py` 로 단독 실행도 가능하다(run_from_settings —

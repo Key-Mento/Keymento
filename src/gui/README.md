@@ -9,7 +9,7 @@
 ```powershell
 cd C:\project\Keymento
 venv\Scripts\activate
-python src\webui\server.py
+python src\gui\server.py
 ```
 
 - PC 브라우저: <http://localhost:8321/>
