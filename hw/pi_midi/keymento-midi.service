@@ -1,0 +1,14 @@
+[Unit]
+Description=KeyMento MIDI sender (USB keyboard -> UDP broadcast)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Keymento
+ExecStart=/home/pi/Keymento/.venv/bin/python /home/pi/Keymento/hw/pi_midi/pi_sender.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
