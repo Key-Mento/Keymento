@@ -11,6 +11,11 @@ timestamp 는 '그 소스의 클럭'으로 찍은 타건 시각이다.
 '직전 음과의 간격'이므로 같은 소스 안의 차이값은 유효하다. UDP 소스에서
 도착 시각 대신 이 값을 쓰면 Wi-Fi 지터가 판정 오차에 섞이지 않는다.
 
+파일 구성:
+  1. 공통 계약  : NoteEvent(정규화된 이벤트), MidiInputSource(인터페이스)
+  2. 구현체     : LocalMidiInput(rtmidi), PiUdpInput(라즈베리파이 UDP)
+  3. 팩토리     : create_input_source — 설정 문자열로 구현체 선택
+
 사용 예:
     with create_input_source("udp") as source:
         event = source.poll()   # NoteEvent 또는 None
@@ -37,6 +42,15 @@ from hw.pi_midi.protocol import (                        # noqa: E402
 
 INPUT_SOURCES = ("local", "udp")
 
+# ── MIDI 상태 바이트 해석용 상수 ────────────────────────────────────
+_STATUS_KIND_MASK = 0xF0    # 상위 4비트 = 메시지 종류 (하위 4비트는 채널)
+_NOTE_ON = 0x90
+_NOTE_OFF = 0x80
+
+
+# ════════════════════════════════════════════════════════════════════
+# 1. 공통 계약 — 모든 입력 소스가 따르는 규격
+# ════════════════════════════════════════════════════════════════════
 
 @dataclass(frozen=True)
 class NoteEvent:
@@ -48,7 +62,11 @@ class NoteEvent:
 
 
 class MidiInputSource:
-    """입력 소스 공통 인터페이스. 서브클래스가 poll/close 를 구현한다."""
+    """입력 소스 공통 인터페이스.
+
+    서브클래스는 poll() 과 close() 만 구현하면 된다. with 문을
+    지원하므로 호출자가 close() 를 직접 챙기지 않아도 된다.
+    """
 
     name = "base"
 
@@ -67,6 +85,10 @@ class MidiInputSource:
         return False
 
 
+# ════════════════════════════════════════════════════════════════════
+# 2. 구현체
+# ════════════════════════════════════════════════════════════════════
+
 class LocalMidiInput(MidiInputSource):
     """PC 에 직접 연결된 MIDI 키보드(rtmidi) 입력."""
 
@@ -75,15 +97,17 @@ class LocalMidiInput(MidiInputSource):
     def __init__(self, port=0):
         self._midi_in = rtmidi.MidiIn()
         ports = self._midi_in.get_ports()
+
+        error = None
         if not ports:
+            error = ("로컬 MIDI 입력 장치가 없습니다. 키보드 연결을 확인하거나 "
+                     "입력 소스를 'udp'(라즈베리파이)로 바꿔주세요.")
+        elif not 0 <= port < len(ports):
+            error = f"MIDI 포트 {port}이 없습니다. 사용 가능: 0~{len(ports) - 1}"
+        if error:
             self._midi_in.delete()
-            raise RuntimeError(
-                "로컬 MIDI 입력 장치가 없습니다. 키보드 연결을 확인하거나 "
-                "입력 소스를 'udp'(라즈베리파이)로 바꿔주세요.")
-        if not 0 <= port < len(ports):
-            self._midi_in.delete()
-            raise RuntimeError(
-                f"MIDI 포트 {port}이 없습니다. 사용 가능: 0~{len(ports) - 1}")
+            raise RuntimeError(error)
+
         self._midi_in.open_port(port)
         self.port_name = ports[port]
 
@@ -95,11 +119,12 @@ class LocalMidiInput(MidiInputSource):
         if len(message) < 3:
             return None
         status, note, velocity = message[0], message[1], message[2]
-        kind = status & 0xF0
+        kind = status & _STATUS_KIND_MASK
 
-        if kind == 0x90 and velocity > 0:
+        if kind == _NOTE_ON and velocity > 0:
             return NoteEvent(True, note, velocity, time.time())
-        if kind == 0x80 or (kind == 0x90 and velocity == 0):
+        # velocity 0 인 Note On 은 Note Off 로 취급 (MIDI 관례)
+        if kind == _NOTE_OFF or (kind == _NOTE_ON and velocity == 0):
             return NoteEvent(False, note, velocity, time.time())
         return None
 
@@ -134,9 +159,13 @@ class PiUdpInput(MidiInputSource):
         self._receiver.stop()
 
 
-def create_input_source(name, midi_port=0, udp_host="0.0.0.0",
-                        udp_port=UDP_DEFAULT_PORT):
-    """이름("local" | "udp")으로 입력 소스를 생성한다."""
+# ════════════════════════════════════════════════════════════════════
+# 3. 팩토리 — 설정 문자열("local" | "udp")로 구현체 선택
+# ════════════════════════════════════════════════════════════════════
+
+def create_input_source(name, midi_port=0,
+                        udp_host="0.0.0.0", udp_port=UDP_DEFAULT_PORT):
+    """이름으로 입력 소스를 생성한다. (가능한 이름: INPUT_SOURCES)"""
     if name == "local":
         return LocalMidiInput(port=midi_port)
     if name == "udp":
