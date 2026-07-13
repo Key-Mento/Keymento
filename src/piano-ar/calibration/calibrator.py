@@ -20,6 +20,12 @@ STABILITY_THRESHOLD = 3.0
 SMOOTHING_ALPHA = 0.3
 MAX_MISSING_FRAMES = 30
 
+# OpenCV orders each marker's corners as top-left, top-right, bottom-right,
+# bottom-left. Keep this as None only when each marker center physically marks
+# the corresponding keyboard corner. Otherwise set the corner index used for
+# marker IDs 0, 1, 2, and 3 after checking the actual marker orientation.
+ARUCO_KEYBOARD_CORNER_INDICES = None
+
 # 수동 클릭 좌표
 manual_points = []
 
@@ -460,21 +466,39 @@ def detect_aruco_points(
     if ids is None:
         return None
 
-    marker_centers = {}
+    marker_reference_points = {}
 
     for marker_corner, marker_id in zip(
         corners,
         ids.flatten()
     ):
         marker_points = marker_corner[0]
-        center = marker_points.mean(axis=0)
+        marker_id = int(marker_id)
 
-        marker_centers[int(marker_id)] = center
+        if marker_id not in (0, 1, 2, 3):
+            continue
+
+        if ARUCO_KEYBOARD_CORNER_INDICES is None:
+            reference_point = marker_points.mean(axis=0)
+        else:
+            if len(ARUCO_KEYBOARD_CORNER_INDICES) != 4:
+                raise ValueError(
+                    "ARUCO_KEYBOARD_CORNER_INDICES must contain 4 indices"
+                )
+
+            corner_index = ARUCO_KEYBOARD_CORNER_INDICES[marker_id]
+
+            if corner_index not in (0, 1, 2, 3):
+                raise ValueError("ArUco corner indices must be from 0 to 3")
+
+            reference_point = marker_points[corner_index]
+
+        marker_reference_points[marker_id] = reference_point
 
     required_ids = [0, 1, 2, 3]
 
     if not all(
-        marker_id in marker_centers
+        marker_id in marker_reference_points
         for marker_id in required_ids
     ):
         return None
@@ -485,10 +509,10 @@ def detect_aruco_points(
     # ID 3: 왼쪽 아래
     points = np.array(
         [
-            marker_centers[0],
-            marker_centers[1],
-            marker_centers[2],
-            marker_centers[3]
+            marker_reference_points[0],
+            marker_reference_points[1],
+            marker_reference_points[2],
+            marker_reference_points[3]
         ],
         dtype=np.float32
     )

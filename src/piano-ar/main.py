@@ -3,6 +3,13 @@ import sys
 import time
 from pathlib import Path
 
+# Project paths must be registered before importing local modules.
+SRC_DIR = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 from ar.overlay import render
 from calibration.calibrator import (
     MOVEMENT_THRESHOLD,
@@ -22,30 +29,87 @@ from camera.capture import open_camera
 from keyboard.mapping import build_keys
 from utils.transform import get_matrix, warp
 
-SRC_DIR = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-if str(SRC_DIR) not in sys.path:
-    sys.path.append(str(SRC_DIR))
-
-from score.score_loader import load_score
-
 
 DEFAULT_SCORE_PATH = PROJECT_ROOT / "songs" / "twinkle-twinkle-little-star.mid"
+SONGS_DIR = PROJECT_ROOT / "songs"
+MIDI_EXTENSIONS = {".mid", ".midi"}
+
+
+def _display_song_name(path):
+    return path.stem.replace("-", " ").replace("_", " ").title()
 
 
 def _get_score_path():
     if len(sys.argv) > 1:
         return Path(sys.argv[1]).expanduser().resolve()
 
-    return DEFAULT_SCORE_PATH
+    if not SONGS_DIR.is_dir():
+        print(f"Songs directory not found: {SONGS_DIR}")
+        return DEFAULT_SCORE_PATH
+
+    song_paths = sorted(
+        path
+        for path in SONGS_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() in MIDI_EXTENSIONS
+    )
+
+    if not song_paths:
+        print(f"No MIDI files found in {SONGS_DIR}")
+        return DEFAULT_SCORE_PATH
+
+    default_index = 0
+
+    if DEFAULT_SCORE_PATH in song_paths:
+        default_index = song_paths.index(DEFAULT_SCORE_PATH)
+
+    print()
+    print("Select a song:")
+
+    for index, path in enumerate(song_paths, start=1):
+        default_marker = " (default)" if index - 1 == default_index else ""
+        print(f"{index}. {_display_song_name(path)}{default_marker}")
+
+    while True:
+        choice = input(
+            f"Song number [default {default_index + 1}]: "
+        ).strip()
+
+        if not choice:
+            return song_paths[default_index]
+
+        if choice.isdigit():
+            selected_index = int(choice) - 1
+
+            if 0 <= selected_index < len(song_paths):
+                return song_paths[selected_index]
+
+        print(f"Enter a number from 1 to {len(song_paths)}.")
 
 
 def _load_score_notes():
     score_path = _get_score_path()
 
+    if not score_path.is_file():
+        print(f"Score file not found: {score_path}")
+        return [], None, score_path
+
+    if score_path.suffix.lower() not in MIDI_EXTENSIONS:
+        print(f"Unsupported score file: {score_path}")
+        print("Use a .mid or .midi file.")
+        return [], None, score_path
+
     try:
+        from score.score_loader import load_score
+
         notes, bpm = load_score(str(score_path))
+    except ModuleNotFoundError as error:
+        if error.name == "mido":
+            print("Failed to load score: Python package 'mido' is missing.")
+            print("Install it with:")
+            print(f"{sys.executable} -m pip install mido")
+            return [], None, score_path
+
+        raise
     except OSError as error:
         print(f"Failed to load score: {score_path}")
         print(error)
@@ -59,6 +123,10 @@ def _load_score_notes():
 
 def main():
     score_notes, _, _ = _load_score_notes()
+
+    if not score_notes:
+        print("No playable score notes were loaded.")
+        return
 
     cap = open_camera()
 
