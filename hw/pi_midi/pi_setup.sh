@@ -9,6 +9,9 @@
 # PC 쪽은 Wi-Fi "Keymento" 에 접속한 뒤 세션을 udp 모드로 실행하면 된다.
 # (Pi = 10.42.0.1, 전송은 10.42.0.255 브로드캐스트라 PC IP 설정 불필요)
 #
+# MIDI 키보드가 없을 때: 일반 USB 자판을 꽂고 key_sender.py 를 수동 실행
+# (서비스는 MIDI 장치만 기다리므로 자판에는 반응하지 않는다. key_sender.py 참고)
+#
 # 전제: Raspberry Pi OS Bookworm 이상(NetworkManager 기본), 프로젝트가
 #       /home/pi/Keymento 에 클론되어 있음 (다르면 keymento-midi.service 수정).
 
@@ -24,9 +27,12 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "=== Keymento pi_midi 설정 ==="
 
-# 1. 시스템 의존성 (python-rtmidi 빌드용)
+# 1. 시스템 의존성 (python-rtmidi / evdev 빌드용)
 sudo apt-get update
-sudo apt-get install -y libasound2-dev libjack-dev python3-venv
+sudo apt-get install -y libasound2-dev libjack-dev python3-venv python3-dev
+
+# 일반 자판 임시 입력(key_sender.py)용 — /dev/input 읽기 권한 (재로그인 후 적용)
+sudo usermod -aG input "$USER"
 
 # 2. 파이썬 가상환경 + 의존성
 if [ ! -d "$PROJECT_DIR/.venv" ]; then
