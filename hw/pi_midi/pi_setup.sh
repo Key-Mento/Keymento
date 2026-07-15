@@ -14,6 +14,8 @@
 #
 # 전제: Raspberry Pi OS Bookworm 이상(NetworkManager 기본), 프로젝트가
 #       /home/pi/Keymento 에 클론되어 있음 (다르면 keymento-midi.service 수정).
+#       Bullseye 이하(dhcpcd 기반, "NetworkManager is not running" 에러)는
+#       pi_setup_dhcpcd.sh 를 대신 실행할 것.
 
 set -e
 
