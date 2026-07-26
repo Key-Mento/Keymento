@@ -1,5 +1,6 @@
 import cv2
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -27,12 +28,121 @@ from calibration.calibrator import (
 )
 from camera.capture import open_camera
 from keyboard.mapping import build_keys
+from midi.inputs import create_input_source
+from perform.session import load_judgement_notes, run_judgement
+from settings import Settings
 from utils.transform import get_matrix, warp
 
 
 DEFAULT_SCORE_PATH = PROJECT_ROOT / "songs" / "twinkle-twinkle-little-star.mid"
 SONGS_DIR = PROJECT_ROOT / "songs"
 MIDI_EXTENSIONS = {".mid", ".midi"}
+SESSION_COUNTDOWN = 3
+# Keep judgement and AR guidance on the same slower timeline.
+# 1.0 is the original tempo; lower values make the performance slower.
+PLAYBACK_SPEED_SCALE = 0.35
+
+
+class PerformanceSession:
+    """Run MIDI judgement without blocking the camera/AR render loop."""
+
+    def __init__(self, score_path, speed, input_source):
+        self.score_path = score_path
+        self.speed = speed
+        self.input_source = input_source
+        self.stop_event = threading.Event()
+        self.thread = None
+        self.started_at = None
+        self.event = {"type": "ready"}
+        self.result = None
+        self.error = None
+        self._lock = threading.Lock()
+
+    def _on_event(self, event):
+        with self._lock:
+            self.event = event
+            if event["type"] == "start":
+                self.started_at = time.monotonic()
+                self.result = None
+            elif event["type"] == "done":
+                self.result = event["result"]
+
+    def _run(self):
+        try:
+            with create_input_source(self.input_source) as source:
+                run_judgement(
+                    str(self.score_path),
+                    speed=self.speed,
+                    countdown=SESSION_COUNTDOWN,
+                    sound=True,
+                    input_source=source,
+                    on_event=self._on_event,
+                    stop_event=self.stop_event,
+                )
+        except Exception as error:  # Keep the AR window alive on MIDI errors.
+            with self._lock:
+                self.error = str(error)
+                self.event = {"type": "error"}
+            print(f"Performance session failed: {error}")
+
+    def start(self):
+        if self.thread is not None and self.thread.is_alive():
+            return
+        self.stop_event.clear()
+        with self._lock:
+            self.started_at = None
+            self.result = None
+            self.error = None
+            self.event = {"type": "ready"}
+        self.thread = threading.Thread(
+            target=self._run,
+            name="performance-session",
+            daemon=True,
+        )
+        self.thread.start()
+
+    def restart(self):
+        self.stop()
+        if self.thread is not None:
+            self.thread.join(timeout=1.0)
+        self.stop_event = threading.Event()
+        self.start()
+
+    def stop(self):
+        self.stop_event.set()
+
+    def snapshot(self):
+        with self._lock:
+            return self.started_at, dict(self.event), self.result, self.error
+
+
+def _session_status(event, result, error):
+    if error:
+        return f"MIDI error: {error}", (0, 0, 255)
+    if result:
+        return (
+            f"Finished  Overall {result['overall']:.1f}%  "
+            f"Pitch {result['pitch_accuracy']:.1f}%  "
+            f"Timing {result['timing_accuracy']:.1f}%",
+            (0, 255, 0),
+        )
+
+    event_type = event.get("type")
+    if event_type == "countdown":
+        return f"Get ready: {event['seconds']}", (0, 255, 255)
+    if event_type == "start":
+        return f"Play: {event.get('next', '')}", (0, 255, 0)
+    if event_type == "note":
+        pitch = "OK" if event["pitch_ok"] else "WRONG"
+        return (
+            f"{event['index']}/{event['total']}  {pitch}  "
+            f"{event['grade']} ({event['diff_ms']:+d}ms)  "
+            f"Next: {event.get('next') or '-'}",
+            (0, 255, 0) if event["pitch_ok"] else (0, 0, 255),
+        )
+    if event_type == "aborted":
+        return "Performance stopped", (0, 165, 255)
+    return "Preparing MIDI input...", (255, 255, 255)
 
 
 def _display_song_name(path):
@@ -99,9 +209,8 @@ def _load_score_notes():
         return [], None, score_path
 
     try:
-        from score.score_loader import load_score
-
-        notes, bpm = load_score(str(score_path))
+        notes = load_judgement_notes(str(score_path))
+        bpm = None
     except ModuleNotFoundError as error:
         if error.name == "mido":
             print("Failed to load score: Python package 'mido' is missing.")
@@ -116,13 +225,15 @@ def _load_score_notes():
         return [], None, score_path
 
     print(f"Loaded score: {score_path}")
-    print(f"Notes: {len(notes)} / BPM: {bpm}")
+    print(f"Judgement/AR notes: {len(notes)}")
+    if notes:
+        print(f"First target MIDI note: {notes[0]['note']}")
 
     return notes, bpm, score_path
 
 
 def main():
-    score_notes, _, _ = _load_score_notes()
+    score_notes, _, score_path = _load_score_notes()
 
     if not score_notes:
         print("No playable score notes were loaded.")
@@ -141,13 +252,23 @@ def main():
     calibration_points = points.copy()
     matrix = get_matrix(calibration_points)
     detector = create_aruco_detector()
+    settings = Settings()
+    playback_speed = settings.speed * PLAYBACK_SPEED_SCALE
+    performance = PerformanceSession(
+        score_path,
+        speed=playback_speed,
+        input_source=settings.input_source,
+    )
+    print(
+        f"Playback speed: {playback_speed:g}x "
+        f"(settings {settings.speed:g}x * AR scale {PLAYBACK_SPEED_SCALE:g})"
+    )
+    performance.start()
 
     candidate_points = None
     stable_count = 0
     update_count = 0
     auto_update_enabled = True
-    playback_start_time = time.time()
-
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -249,7 +370,13 @@ def main():
             cv2.rectangle(warped, (x1, y1), (x2, y2), (50, 50, 50), -1)
             cv2.rectangle(warped, (x1, y1), (x2, y2), (0, 200, 255), 1)
 
-        playback_time = time.time() - playback_start_time
+        started_at, session_event, result, session_error = (
+            performance.snapshot()
+        )
+        playback_time = (
+            (time.monotonic() - started_at) * performance.speed
+            if started_at is not None else -1.0
+        )
         output = render(
             warped,
             whites,
@@ -267,9 +394,23 @@ def main():
             status_color,
             2
         )
+        session_message, session_color = _session_status(
+            session_event,
+            result,
+            session_error,
+        )
         cv2.putText(
             output,
-            "M: manual / A: auto / R: reset ArUco / P: restart score / ESC",
+            session_message,
+            (15, 50),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.50,
+            session_color,
+            2,
+        )
+        cv2.putText(
+            output,
+            "M: manual / A: auto / R: reset ArUco / P: restart session / ESC",
             (15, h - 12),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
@@ -316,9 +457,11 @@ def main():
                 print("Cannot reset: ArUco IDs 0, 1, 2, 3 are not all visible")
 
         if key in (ord("p"), ord("P")):
-            playback_start_time = time.time()
-            print("Score playback restarted")
-
+            performance.restart()
+            print("Performance session restarted")
+    performance.stop()
+    if performance.thread is not None:
+        performance.thread.join(timeout=1.0)
     cap.release()
     cv2.destroyAllWindows()
 

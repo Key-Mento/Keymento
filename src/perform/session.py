@@ -56,6 +56,25 @@ from midi.inputs import LocalMidiInput, create_input_source  # noqa: E402
 from midi.sound import NotePlayer                      # noqa: E402
 
 
+def load_judgement_notes(song_path):
+    """Return AR note events from the exact answer sheet used for judgement."""
+    answers = get_answer_sheet(song_path)
+    notes = []
+
+    for index, answer in enumerate(answers):
+        if index + 1 < len(answers):
+            duration = max(answers[index + 1]["time"] - answer["time"], 0.25)
+        else:
+            duration = 0.5
+        notes.append({
+            "note": answer["note"],
+            "time": answer["time"],
+            "duration": duration,
+        })
+
+    return notes
+
+
 def _emit(on_event, payload):
     """콜백 오류가 판정 세션을 죽이지 않도록 감싸서 호출한다."""
     if on_event is None:
@@ -150,6 +169,54 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
                 _emit(on_event, {"type": "aborted", "index": current_idx,
                                  "total": total_notes})
                 return None
+
+            elapsed = time.time() - start_time
+
+            # Advance with the score clock even if no key was pressed.
+            while current_idx < total_notes:
+                target_time = answers[current_idx]["time"] / speed
+                deadline = target_time + 0.9
+                if current_idx + 1 < total_notes:
+                    next_target_time = (
+                        answers[current_idx + 1]["time"] / speed
+                    )
+                    if next_target_time > target_time:
+                        deadline = min(deadline, next_target_time)
+
+                if elapsed <= deadline:
+                    break
+
+                target_note = answers[current_idx]["note"]
+                time_diff_ms = (elapsed - target_time) * 1000
+                pitch_wrong += 1
+                timing_stats["Miss"] += 1
+                last_note_ts = time.time()
+                current_idx += 1
+                next_name = (
+                    note_to_name(answers[current_idx]["note"])
+                    if current_idx < total_notes else None
+                )
+
+                print(
+                    f"[{current_idx}/{total_notes}] "
+                    f"MISSED {note_to_name(target_note)} "
+                    f"(no input, +{time_diff_ms:.0f}ms)"
+                )
+                _emit(on_event, {
+                    "type": "note",
+                    "index": current_idx,
+                    "total": total_notes,
+                    "pitch_ok": False,
+                    "played": "-",
+                    "expected": note_to_name(target_note),
+                    "grade": "Miss",
+                    "diff_ms": round(time_diff_ms),
+                    "next": next_name,
+                    "timed_out": True,
+                })
+
+            if current_idx >= total_notes:
+                break
 
             event = source.poll()
 
