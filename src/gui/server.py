@@ -14,6 +14,7 @@ API:
     POST /api/select  {"song_id": "..."}
     POST /api/speed   {"speed": 1.25}
     POST /api/input   {"source": "local" | "udp"}
+    POST /api/mode    {"practice": true | false}
     POST /api/start   판정 세션 시작 (백그라운드 스레드)
     POST /api/stop    실행 중인 세션 중단
 """
@@ -158,6 +159,7 @@ class SessionManager:
                 input_source=source,
                 on_event=self._push,
                 stop_event=self._stop,
+                practice=self.settings.practice_mode,
             )
         except Exception as exc:  # noqa: BLE001
             self._push({"type": "error", "message": str(exc)})
@@ -202,6 +204,7 @@ def _make_handler(manager: SessionManager):
                 "presets": SPEED_PRESETS,
                 "input": settings.input_source,
                 "input_sources": list(INPUT_SOURCES),
+                "practice": settings.practice_mode,
             }
             payload.update(manager.snapshot(since))
             return payload
@@ -225,7 +228,7 @@ def _make_handler(manager: SessionManager):
 
         def do_POST(self):
             if manager.running() and self.path in (
-                    "/api/select", "/api/speed", "/api/input"):
+                    "/api/select", "/api/speed", "/api/input", "/api/mode"):
                 self._send_json(
                     {"ok": False, "error": "연주 중에는 변경할 수 없습니다."},
                     status=409)
@@ -244,6 +247,8 @@ def _make_handler(manager: SessionManager):
                     settings.set_speed(data.get("speed"))
                 elif self.path == "/api/input":
                     settings.set_input_source(str(data.get("source")))
+                elif self.path == "/api/mode":
+                    settings.set_practice_mode(bool(data.get("practice")))
                 elif self.path == "/api/start":
                     ok, error = manager.start()
                     if not ok:
@@ -258,7 +263,8 @@ def _make_handler(manager: SessionManager):
                 self._send_json({"ok": False, "error": str(exc)}, 400)
                 return
 
-            if self.path in ("/api/select", "/api/speed", "/api/input"):
+            if self.path in ("/api/select", "/api/speed", "/api/input",
+                             "/api/mode"):
                 settings.save()
             self._send_json({"ok": True, **self._state_payload()})
 

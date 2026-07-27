@@ -69,6 +69,7 @@
     color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer;
   }
   .segment button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  #modeDesc { margin-top: 10px; font-size: 13px; line-height: 1.5; color: var(--muted); }
 
   /* 시작/중지 */
   #mainBtn {
@@ -134,6 +135,12 @@
     <div class="segment" id="inputRow"></div>
   </section>
 
+  <section class="card">
+    <h2>모드</h2>
+    <div class="segment" id="modeRow"></div>
+    <div id="modeDesc"></div>
+  </section>
+
   <div>
     <button id="mainBtn">▶ 연주 시작</button>
     <div id="hint"></div>
@@ -154,8 +161,8 @@
     <h2>최종 결과</h2>
     <div id="overallScore">0<small> / 100점</small></div>
     <div class="resultRow">
-      <div><b id="pitchAcc">-</b>음정 정확도</div>
-      <div><b id="timingAcc">-</b>박자 정확도</div>
+      <div><b id="pitchAcc">-</b><span id="pitchAccLabel">음정 정확도</span></div>
+      <div><b id="timingAcc">-</b><span id="timingAccLabel">박자 정확도</span></div>
     </div>
     <div id="gradeRow"></div>
   </section>
@@ -237,6 +244,21 @@ function render(s) {
     inputRow.appendChild(btn);
   }
 
+  // 모드 (일반 / 연습)
+  const modeRow = $("modeRow");
+  modeRow.innerHTML = "";
+  for (const [practice, label] of [[false, "일반"], [true, "연습"]]) {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.disabled = running;
+    if (practice === s.practice) btn.className = "active";
+    btn.onclick = () => postJSON("/api/mode", { practice });
+    modeRow.appendChild(btn);
+  }
+  $("modeDesc").textContent = s.practice
+    ? "정답 건반을 칠 때까지 다음 음으로 넘어가지 않습니다. 기다리는 시간이 섞이므로 박자는 판정하지 않고, 점수는 음정만으로 냅니다."
+    : "악보 시계대로 진행합니다. 시간 안에 못 치면 Miss 로 넘어가고, 음정과 박자를 함께 판정합니다.";
+
   // 시작/중지 버튼
   const mainBtn = $("mainBtn");
   if (running) {
@@ -273,17 +295,27 @@ function render(s) {
   // 결과 카드
   const resultCard = $("resultCard");
   if (s.result) {
+    const practice = s.result.mode === "practice";
     resultCard.style.display = "block";
     $("overallScore").innerHTML = s.result.overall + "<small> / 100점</small>";
     $("pitchAcc").textContent = s.result.pitch_accuracy + "%";
-    $("timingAcc").textContent = s.result.timing_accuracy + "%";
+    $("pitchAccLabel").textContent = practice ? "한 번에 맞춘 비율" : "음정 정확도";
+    $("timingAcc").textContent = practice ? "-" : s.result.timing_accuracy + "%";
+    $("timingAccLabel").textContent = practice ? "박자 판정 없음" : "박자 정확도";
     const row = $("gradeRow");
     row.innerHTML = "";
-    for (const g of ["Perfect", "Great", "Good", "Miss"]) {
+    if (practice) {
       const div = document.createElement("div");
-      div.className = "grade-" + g;
-      div.textContent = GRADE_EMOJI[g] + " " + g + " " + s.result.timing[g];
+      div.className = "grade-Good";
+      div.textContent = "🔁 총 오타 " + s.result.wrong_attempts + "회";
       row.appendChild(div);
+    } else {
+      for (const g of ["Perfect", "Great", "Good", "Miss"]) {
+        const div = document.createElement("div");
+        div.className = "grade-" + g;
+        div.textContent = GRADE_EMOJI[g] + " " + g + " " + s.result.timing[g];
+        row.appendChild(div);
+      }
     }
   } else {
     resultCard.style.display = "none";
@@ -299,11 +331,24 @@ function render(s) {
     const pitch = ev.pitch_ok
       ? "✅ " + ev.played
       : '❌ <span class="pitch-bad">' + ev.played + "</span> (정답: " + ev.expected + ")";
-    const diff = (ev.diff_ms >= 0 ? "+" : "") + ev.diff_ms + "ms";
+
+    // 연습 모드는 박자를 판정하지 않아 grade 가 null 로 온다.
+    let mark;
+    if (ev.grade) {
+      const diff = (ev.diff_ms >= 0 ? "+" : "") + ev.diff_ms + "ms";
+      mark = '<span class="grade-' + ev.grade + '">' +
+        GRADE_EMOJI[ev.grade] + " " + ev.grade + " " + diff + "</span>";
+    } else if (ev.retry) {
+      mark = '<span class="grade-Miss">🔁 다시</span>';
+    } else if (ev.first_try) {
+      mark = '<span class="grade-Perfect">✅ 한 번에</span>';
+    } else {
+      mark = '<span class="grade-Good">☑️ 통과</span>';
+    }
+
     item.innerHTML =
       '<span class="idx">' + ev.index + "/" + ev.total + "</span>" +
-      "<span>" + pitch + "</span>" +
-      '<span class="grade-' + ev.grade + '">' + GRADE_EMOJI[ev.grade] + " " + ev.grade + " " + diff + "</span>";
+      "<span>" + pitch + "</span>" + mark;
     $("feed").prepend(item);
     while ($("feed").children.length > 30) $("feed").lastChild.remove();
   }

@@ -7,7 +7,8 @@ from .inputs import (
     PiUdpInput,
     create_input_source,
 )
-from .sound import NotePlayer, list_output_ports
+from .sound import NotePlayer, list_output_ports, BACKENDS as SOUND_BACKENDS
+from .synth import SoftSynth
 
 __all__ = [
     "NoteEvent",
@@ -17,4 +18,6 @@ __all__ = [
     "create_input_source",
     "NotePlayer",
     "list_output_ports",
+    "SOUND_BACKENDS",
+    "SoftSynth",
 ]

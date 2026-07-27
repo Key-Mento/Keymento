@@ -1,10 +1,10 @@
-"""사용자 설정 패키지: 곡 선택 + 속도 + 입력 소스.
+"""사용자 설정 패키지: 곡 선택 + 속도 + 입력 소스 + 연습 모드.
 
 역할 분담:
   - 곡 선택 로직   → songs.py (SongLibrary)
   - 속도 검증 로직 → speed.py (SpeedControl)
-  - 이 파일        → 둘을 조립한 Settings 파사드. 입력 소스 선택과
-                     JSON(data/settings.json) 저장/복원을 담당.
+  - 이 파일        → 둘을 조립한 Settings 파사드. 입력 소스·연습 모드
+                     선택과 JSON(data/settings.json) 저장/복원을 담당.
 
 GUI 등 호출자는 Settings 하나만 알면 된다. 곡/속도 로직만 필요하면
 SongLibrary, SpeedControl 을 단독으로 써도 된다.
@@ -27,6 +27,10 @@ from .speed import (
 INPUT_SOURCES = ("local", "udp")
 DEFAULT_INPUT_SOURCE = "local"
 
+# ── 연습 모드 ─────────────────────────────────────────────────────
+# True 면 정답 건반을 칠 때까지 다음 음으로 넘어가지 않는다(박자 판정 없음).
+DEFAULT_PRACTICE_MODE = False
+
 # 프로젝트 루트: src/settings/__init__.py → 세 단계 위
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "data", "settings.json")
@@ -42,11 +46,12 @@ __all__ = [
     "DEFAULT_SPEED",
     "INPUT_SOURCES",
     "DEFAULT_INPUT_SOURCE",
+    "DEFAULT_PRACTICE_MODE",
 ]
 
 
 class Settings:
-    """곡 선택 + 속도 + 입력 소스를 보관하고 JSON 으로 영속화한다."""
+    """곡 선택 + 속도 + 입력 소스 + 연습 모드를 보관하고 JSON 으로 영속화한다."""
 
     def __init__(self, songs_dir: str = DEFAULT_SONGS_DIR,
                  config_path: str = DEFAULT_CONFIG_PATH):
@@ -54,6 +59,7 @@ class Settings:
         self.songs = SongLibrary(songs_dir)
         self._speed = SpeedControl()
         self._input_source: str = DEFAULT_INPUT_SOURCE
+        self._practice_mode: bool = DEFAULT_PRACTICE_MODE
         self.load()
 
     @property
@@ -97,11 +103,22 @@ class Settings:
         self._input_source = name
         return self._input_source
 
+    # ── 연습 모드 ─────────────────────────────────────────────────
+    @property
+    def practice_mode(self) -> bool:
+        """True 면 정답을 칠 때까지 다음 음으로 넘어가지 않는다."""
+        return self._practice_mode
+
+    def set_practice_mode(self, enabled: bool) -> bool:
+        self._practice_mode = bool(enabled)
+        return self._practice_mode
+
     # ── 영속화 ───────────────────────────────────────────────────
     def to_dict(self) -> dict:
         return {"selected_song": self.songs.selected_id,
                 "speed": self._speed.value,
-                "input_source": self._input_source}
+                "input_source": self._input_source,
+                "practice_mode": self._practice_mode}
 
     def save(self) -> None:
         """현재 설정을 config_path(JSON)에 저장한다."""
@@ -131,3 +148,7 @@ class Settings:
         input_source = data.get("input_source")
         if input_source in INPUT_SOURCES:
             self._input_source = input_source
+
+        practice_mode = data.get("practice_mode")
+        if isinstance(practice_mode, bool):
+            self._practice_mode = practice_mode

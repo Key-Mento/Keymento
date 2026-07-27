@@ -16,3 +16,4 @@ venv/
 Thumbs.db
 
 data/calibration.json
+.claude/

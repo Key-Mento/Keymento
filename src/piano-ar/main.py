@@ -46,10 +46,11 @@ PLAYBACK_SPEED_SCALE = 0.35
 class PerformanceSession:
     """Run MIDI judgement without blocking the camera/AR render loop."""
 
-    def __init__(self, score_path, speed, input_source):
+    def __init__(self, score_path, speed, input_source, practice=False):
         self.score_path = score_path
         self.speed = speed
         self.input_source = input_source
+        self.practice = practice
         self.stop_event = threading.Event()
         self.thread = None
         self.started_at = None
@@ -78,6 +79,7 @@ class PerformanceSession:
                     input_source=source,
                     on_event=self._on_event,
                     stop_event=self.stop_event,
+                    practice=self.practice,
                 )
         except Exception as error:  # Keep the AR window alive on MIDI errors.
             with self._lock:
@@ -120,10 +122,13 @@ def _session_status(event, result, error):
     if error:
         return f"MIDI error: {error}", (0, 0, 255)
     if result:
+        # Practice mode does not grade timing, so timing_accuracy is None.
+        timing = result.get("timing_accuracy")
+        timing_text = "-" if timing is None else f"{timing:.1f}%"
         return (
             f"Finished  Overall {result['overall']:.1f}%  "
             f"Pitch {result['pitch_accuracy']:.1f}%  "
-            f"Timing {result['timing_accuracy']:.1f}%",
+            f"Timing {timing_text}",
             (0, 255, 0),
         )
 
@@ -133,16 +138,49 @@ def _session_status(event, result, error):
     if event_type == "start":
         return f"Play: {event.get('next', '')}", (0, 255, 0)
     if event_type == "note":
+        progress = f"{event['index']}/{event['total']}"
+        next_text = event.get("next") or "-"
+
+        # Practice mode: wrong key, stay on the same target.
+        if event.get("retry"):
+            return (
+                f"{progress}  WRONG {event['played']}  "
+                f"Play: {event['expected']}",
+                (0, 0, 255),
+            )
+        # Practice mode: correct key, no timing grade to show.
+        if event.get("grade") is None:
+            mark = "OK" if event.get("first_try") else "OK (retried)"
+            return f"{progress}  {mark}  Next: {next_text}", (0, 255, 0)
+
         pitch = "OK" if event["pitch_ok"] else "WRONG"
         return (
-            f"{event['index']}/{event['total']}  {pitch}  "
+            f"{progress}  {pitch}  "
             f"{event['grade']} ({event['diff_ms']:+d}ms)  "
-            f"Next: {event.get('next') or '-'}",
+            f"Next: {next_text}",
             (0, 255, 0) if event["pitch_ok"] else (0, 0, 255),
         )
     if event_type == "aborted":
         return "Performance stopped", (0, 165, 255)
     return "Preparing MIDI input...", (255, 255, 255)
+
+
+def _practice_targets(session, event, result):
+    """Keys to highlight right now, or None to follow the score clock.
+
+    Practice mode holds one target until it is played, so the AR overlay
+    cannot be driven by playback time -- the marker would fade away while
+    the session is still waiting for that key.
+    """
+    if not session.practice:
+        return None
+
+    if result is not None or event.get("type") not in ("start", "note"):
+        return []
+
+    target = event.get("next_midi")
+
+    return [target] if target is not None else []
 
 
 def _display_song_name(path):
@@ -258,11 +296,14 @@ def main():
         score_path,
         speed=playback_speed,
         input_source=settings.input_source,
+        practice=settings.practice_mode,
     )
     print(
         f"Playback speed: {playback_speed:g}x "
         f"(settings {settings.speed:g}x * AR scale {PLAYBACK_SPEED_SCALE:g})"
     )
+    if settings.practice_mode:
+        print("Practice mode: waits for the correct key, no timing grade")
     performance.start()
 
     candidate_points = None
@@ -382,7 +423,12 @@ def main():
             whites,
             blacks,
             notes=score_notes,
-            playback_time=playback_time
+            playback_time=playback_time,
+            active_notes=_practice_targets(
+                performance,
+                session_event,
+                result,
+            ),
         )
 
         cv2.putText(
