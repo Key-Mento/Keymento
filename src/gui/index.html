@@ -317,6 +317,13 @@ function render(s) {
         row.appendChild(div);
       }
     }
+    // 화음은 순서를 따지지 않고 한 박으로 세므로 박자 개수와 음 수가 다르다.
+    if (s.result.chords) {
+      const div = document.createElement("div");
+      div.className = "grade-Good";
+      div.textContent = "🎹 화음 " + s.result.chords + "곳";
+      row.appendChild(div);
+    }
   } else {
     resultCard.style.display = "none";
   }

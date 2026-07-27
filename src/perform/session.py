@@ -31,6 +31,12 @@ Keymento 의 다른 부품들은 각자 자기 일만 안다 — 판정 규칙
                  0.5x → 간격 2배(느리게 쳐도 정확), 2.0x → 절반(빠르게).
   3. 입력 소스 : 로컬 MIDI 키보드 또는 라즈베리파이 UDP 수신
                  (midi/inputs.py 의 MidiInputSource 로 추상화).
+  4. 화음      : 정답지는 note_on 을 늘어놓은 1차원 배열이라 화음도 그냥
+                 나란히 들어간다. 한 음씩 대조하면 화음을 파일에 적힌
+                 순서대로 쳐야만 통과하는데, 동시에 누른 음의 도착 순서는
+                 매번 다르다. 그래서 같은 시각의 음들을 한 덩어리로 묶어
+                 (judgement.group_answers) 그 안에서는 순서를 따지지 않고,
+                 박자도 덩어리 하나를 한 박으로 매긴다.
 
 박자 판정은 이벤트가 '소스 클럭'으로 찍은 타건 시각(NoteEvent.timestamp)
 간의 간격을 쓴다. UDP 소스는 라즈베리파이가 찍은 시각이 그대로 오므로
@@ -59,7 +65,11 @@ for _p in (_SRC_DIR, _PIANO_SCORE_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from judgement import get_answer_sheet, note_to_name  # noqa: E402
+from judgement import (  # noqa: E402
+    get_answer_sheet,
+    group_answers,
+    note_to_name,
+)
 from settings import Settings                          # noqa: E402
 from midi.inputs import LocalMidiInput, create_input_source  # noqa: E402
 from midi.sound import NotePlayer                      # noqa: E402
@@ -92,6 +102,11 @@ def _emit(on_event, payload):
         on_event(payload)
     except Exception as exc:  # noqa: BLE001
         print(f"(on_event 콜백 오류 무시: {exc})")
+
+
+def _names(notes):
+    """여러 음을 한 덩어리로 읽히게 잇는다 ('도4+미4+솔4'). 비면 None."""
+    return "+".join(note_to_name(n) for n in notes) if notes else None
 
 
 def _grade(abs_diff_ms):
@@ -134,12 +149,38 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
         print("정답지가 비어있습니다. MIDI 파일을 확인해주세요.")
         return None
 
+    # 동시에 눌러야 하는 음들을 한 덩어리로 묶는다. 덩어리 안에서는
+    # 치는 순서를 따지지 않고, 박자도 덩어리 하나를 한 박으로 본다.
+    groups = group_answers(answers)
+
+    def group_notes(index):
+        """index 번째 덩어리에서 쳐야 할 음 목록."""
+        start, end = groups[index]
+        return [answer["note"] for answer in answers[start:end]]
+
+    def group_time(index):
+        """index 번째 덩어리의 악보상 시각(초)."""
+        return answers[groups[index][0]]["time"]
+
+    def upcoming(remaining, index):
+        """다음에 쳐야 할 음 — 화음이 덜 끝났으면 그 나머지, 아니면 다음 덩어리."""
+        if remaining:
+            return list(remaining)
+        return group_notes(index) if index < total_groups else []
+
     # === 통계 변수 초기화 ===
     total_notes = len(answers)
+    total_groups = len(groups)
     pitch_correct = 0
     pitch_wrong = 0
     timing_stats = {'Perfect': 0, 'Great': 0, 'Good': 0, 'Miss': 0}
-    current_idx = 0
+    group_idx = 0           # 지금 치고 있는 덩어리
+    done_notes = 0          # 판정이 끝난 음 수 (진행률 표시용)
+    pending = []            # 현재 덩어리에서 아직 치지 않은 음
+    # 박자는 덩어리의 첫 타건에서 한 번만 매기고, 나머지 음에는 그 등급을
+    # 그대로 보여 준다 — 화음 세 음이 제각각 다른 등급으로 보이면 안 된다.
+    group_grade = None
+    group_diff_ms = None
     # 연습 모드 전용: 총 오타 횟수와 '지금 음에서 이미 틀렸는가'
     wrong_attempts = 0
     missed_current = False
@@ -155,8 +196,10 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
         return stop_event is not None and stop_event.is_set()
 
     mode_note = " · 연습 모드(맞을 때까지 대기)" if practice else ""
+    chord_count = sum(1 for start, end in groups if end - start > 1)
+    chord_note = f" · 화음 {chord_count}곳" if chord_count else ""
     print(f"\n🎵 총 {total_notes}개의 노트를 연주해야 합니다. "
-          f"(속도 {speed:g}x{mode_note})")
+          f"(속도 {speed:g}x{chord_note}{mode_note})")
     print(f"준비하세요! {countdown}초 뒤 연주를 시작합니다...")
     result = None
 
@@ -170,24 +213,30 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
             _emit(on_event, {"type": "countdown", "seconds": i})
             time.sleep(1)
 
-        first_name = note_to_name(answers[0]['note'])
+        first_notes = group_notes(0)
         print("\n🎹 [START] 연주 시작!")
-        print(f"👉 첫 번째 목표 건반: {first_name}")
+        print(f"👉 첫 번째 목표 건반: {_names(first_notes)}")
         _emit(on_event, {"type": "start", "total": total_notes,
-                         "next": first_name,
-                         "next_midi": answers[0]['note'],
+                         "next": _names(first_notes),
+                         "next_notes": first_notes,
                          "practice": practice})
 
         start_time = time.time()
 
-        # ── 직전 음이 '소스 클럭'으로 눌린 시각 (간격 계산용) ────────
+        # ── 직전 덩어리가 '소스 클럭'으로 눌린 시각 (간격 계산용) ────
         last_note_ts = None
 
-        while current_idx < total_notes:
+        while group_idx < total_groups:
             if _stopped():
-                _emit(on_event, {"type": "aborted", "index": current_idx,
+                _emit(on_event, {"type": "aborted", "index": done_notes,
                                  "total": total_notes})
                 return None
+
+            if not pending:
+                pending = group_notes(group_idx)
+                group_grade = None
+                group_diff_ms = None
+                missed_current = False
 
             # 악보 시계에 따른 자동 진행. 연습 모드에서는 하지 않는다 —
             # 시간이 지나도 넘어가지 않고 정답을 칠 때까지 기다린다.
@@ -195,51 +244,60 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
                 elapsed = time.time() - start_time
 
                 # Advance with the score clock even if no key was pressed.
-                while current_idx < total_notes:
-                    target_time = answers[current_idx]["time"] / speed
+                while group_idx < total_groups:
+                    target_time = group_time(group_idx) / speed
                     deadline = target_time + 0.9
-                    if current_idx + 1 < total_notes:
-                        next_target_time = (
-                            answers[current_idx + 1]["time"] / speed
-                        )
+                    if group_idx + 1 < total_groups:
+                        next_target_time = group_time(group_idx + 1) / speed
                         if next_target_time > target_time:
                             deadline = min(deadline, next_target_time)
 
                     if elapsed <= deadline:
                         break
 
-                    target_note = answers[current_idx]["note"]
+                    # 시간이 지났다 — 이 덩어리에서 아직 안 친 음은 모두 놓친 것.
+                    if not pending:
+                        pending = group_notes(group_idx)
+                    missed_notes = list(pending)
                     time_diff_ms = (elapsed - target_time) * 1000
-                    pitch_wrong += 1
-                    timing_stats["Miss"] += 1
+                    pitch_wrong += len(missed_notes)
+                    timing_stats["Miss"] += 1       # 박자는 덩어리당 한 번
                     last_note_ts = time.time()
-                    current_idx += 1
-                    next_answer = (answers[current_idx]
-                                   if current_idx < total_notes else None)
-                    next_name = (note_to_name(next_answer["note"])
-                                 if next_answer else None)
+                    done_notes += len(missed_notes)
+                    pending = []
+                    group_idx += 1
+                    next_notes = (group_notes(group_idx)
+                                  if group_idx < total_groups else [])
 
                     print(
-                        f"[{current_idx}/{total_notes}] "
-                        f"MISSED {note_to_name(target_note)} "
+                        f"[{done_notes}/{total_notes}] "
+                        f"MISSED {_names(missed_notes)} "
                         f"(no input, +{time_diff_ms:.0f}ms)"
                     )
                     _emit(on_event, {
                         "type": "note",
-                        "index": current_idx,
+                        "index": done_notes,
                         "total": total_notes,
                         "pitch_ok": False,
                         "played": "-",
-                        "expected": note_to_name(target_note),
+                        "played_note": None,
+                        "expected": _names(missed_notes),
+                        "expected_notes": missed_notes,
                         "grade": "Miss",
                         "diff_ms": round(time_diff_ms),
-                        "next": next_name,
-                        "next_midi": next_answer["note"] if next_answer else None,
+                        "next": _names(next_notes),
+                        "next_notes": next_notes,
                         "timed_out": True,
                     })
 
-                if current_idx >= total_notes:
+                if group_idx >= total_groups:
                     break
+
+                if not pending:
+                    pending = group_notes(group_idx)
+                    group_grade = None
+                    group_diff_ms = None
+                    missed_current = False
 
             event = source.poll()
 
@@ -257,33 +315,38 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
                 if player is not None:
                     player.note_on(event.note, event.velocity)
 
-                if practice:
-                    note = event.note
-                    target_note = answers[current_idx]['note']
-                    expected_name = note_to_name(target_note)
+                note = event.note
+                group_size = groups[group_idx][1] - groups[group_idx][0]
+                # 이 덩어리의 첫 타건인가 — 박자는 여기서 한 번만 매긴다.
+                is_group_head = len(pending) == group_size
+                expected_notes = list(pending)
+                expected_name = _names(expected_notes)
 
-                    if note != target_note:
-                        # 틀린 음: 오답으로 남기되 같은 음에 머무른다.
+                if practice:
+                    if note not in pending:
+                        # 틀린 음: 오답으로 남기되 같은 덩어리에 머무른다.
                         # 정확도에는 그 음의 '첫 실패'만 반영한다.
                         wrong_attempts += 1
                         if not missed_current:
                             missed_current = True
                             pitch_wrong += 1
 
-                        print(f"[{current_idx + 1}/{total_notes}] "
+                        print(f"[{done_notes}/{total_notes}] "
                               f"🔁 [다시] 입력:{note_to_name(note)} "
                               f"정답:{expected_name}")
                         _emit(on_event, {
                             "type": "note",
-                            "index": current_idx,
+                            "index": done_notes,
                             "total": total_notes,
                             "pitch_ok": False,
                             "played": note_to_name(note),
+                            "played_note": note,
                             "expected": expected_name,
+                            "expected_notes": expected_notes,
                             "grade": None,
                             "diff_ms": None,
                             "next": expected_name,
-                            "next_midi": target_note,
+                            "next_notes": expected_notes,
                             "retry": True,
                         })
                     else:
@@ -291,106 +354,115 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
                         if first_try:
                             pitch_correct += 1
                         missed_current = False
-                        current_idx += 1
+                        pending.remove(note)
+                        done_notes += 1
+                        if not pending:
+                            group_idx += 1
 
-                        next_answer = (answers[current_idx]
-                                       if current_idx < total_notes else None)
-                        next_name = (note_to_name(next_answer["note"])
-                                     if next_answer else None)
+                        next_notes = upcoming(pending, group_idx)
 
-                        print(f"[{current_idx}/{total_notes}] "
+                        print(f"[{done_notes}/{total_notes}] "
                               f"{'✅' if first_try else '☑️'} "
-                              f"[음정 O] {expected_name}")
-                        if next_name:
-                            print(f"👉 다음 목표: {next_name}")
+                              f"[음정 O] {note_to_name(note)}")
+                        if next_notes:
+                            print(f"👉 다음 목표: {_names(next_notes)}")
 
                         _emit(on_event, {
                             "type": "note",
-                            "index": current_idx,
+                            "index": done_notes,
                             "total": total_notes,
                             "pitch_ok": True,
                             "first_try": first_try,
                             "played": note_to_name(note),
+                            "played_note": note,
                             "expected": expected_name,
+                            "expected_notes": expected_notes,
                             "grade": None,
                             "diff_ms": None,
-                            "next": next_name,
-                            "next_midi": (next_answer["note"]
-                                          if next_answer else None),
+                            "next": _names(next_notes),
+                            "next_notes": next_notes,
                         })
                 else:
-                    note = event.note
-                    target_note = answers[current_idx]['note']
-
                     # ── 1. 음정(Pitch) 판정 ──────────────────────────
-                    if note == target_note:
+                    # 덩어리 안에서는 순서를 따지지 않는다 — 동시에 눌러야
+                    # 하는 음들의 도착 순서는 매번 달라지기 때문이다.
+                    if note in pending:
                         pitch_correct += 1
                         pitch_ok = True
                         pitch_msg = f"✅ [음정 O] {note_to_name(note)}"
+                        pending.remove(note)
                     else:
                         pitch_wrong += 1
                         pitch_ok = False
                         pitch_msg = (f"❌ [음정 X] "
                                      f"입력:{note_to_name(note)} "
-                                     f"정답:{note_to_name(target_note)}")
+                                     f"정답:{expected_name}")
+                        # 틀려도 진행은 시킨다 — 악보 순서상 앞의 음을 소진.
+                        pending.pop(0)
 
                     # ── 2. 박자(Timing) 판정 ─────────────────────────
-                    # 각 음에 대한 독립 오차 계산:
-                    #   실제 간격 = 이 음의 타건 시각 - 직전 음의 타건 시각
+                    # 각 덩어리에 대한 독립 오차 계산:
+                    #   실제 간격 = 이 덩어리의 첫 타건 - 직전 덩어리의 첫 타건
                     #               (같은 소스 클럭끼리의 차 → 지터 무관)
                     #   목표 간격 = MIDI 기준 간격 / speed  (속도 배율 적용)
                     #   오차 = 실제 간격 - 목표 간격
-                    if current_idx == 0:
-                        # 첫 음은 소스 클럭 기준점이 없어 곡 시작부터의
-                        # PC 도착 시각으로 판정 (로컬 소스는 동일한 값)
-                        actual_interval = time.time() - start_time
-                        base_interval = answers[0]['time']
+                    # 화음의 둘째 음부터는 다시 매기지 않고 덩어리의 등급을
+                    # 그대로 쓴다 — 동시에 친 음들은 한 박이다.
+                    if is_group_head:
+                        if group_idx == 0:
+                            # 첫 덩어리는 소스 클럭 기준점이 없어 곡 시작부터의
+                            # PC 도착 시각으로 판정 (로컬 소스는 동일한 값)
+                            actual_interval = time.time() - start_time
+                            base_interval = group_time(0)
+                        else:
+                            actual_interval = event.timestamp - last_note_ts
+                            base_interval = (group_time(group_idx)
+                                             - group_time(group_idx - 1))
+
+                        # 속도 배율 적용: 느릴수록(speed<1) 목표 간격이 늘어난다
+                        target_interval = base_interval / speed
+
+                        # 음수(-) = 빠름, 양수(+) = 늦음
+                        group_diff_ms = (actual_interval - target_interval) * 1000
+
+                        # 임계값: 300 / 600 / 900 ms
+                        group_grade, emoji = _grade(abs(group_diff_ms))
+                        timing_stats[group_grade] += 1
+
+                        # 다음 덩어리를 위해 직전 타건 시각(소스 클럭) 갱신
+                        last_note_ts = event.timestamp
                     else:
-                        actual_interval = event.timestamp - last_note_ts
-                        base_interval = (answers[current_idx]['time']
-                                         - answers[current_idx - 1]['time'])
+                        _, emoji = _grade(abs(group_diff_ms))
 
-                    # 속도 배율 적용: 느릴수록(speed<1) 목표 간격이 늘어난다
-                    target_interval = base_interval / speed
+                    sign = (f"+{group_diff_ms:.0f}"
+                            if group_diff_ms >= 0
+                            else f"{group_diff_ms:.0f}")
+                    timing_msg = f"{emoji} {group_grade:<7} ({sign}ms)"
 
-                    # 음수(-) = 빠름, 양수(+) = 늦음
-                    time_diff_ms = (actual_interval - target_interval) * 1000
-                    abs_diff_ms = abs(time_diff_ms)
-                    sign = (f"+{time_diff_ms:.0f}"
-                            if time_diff_ms >= 0
-                            else f"{time_diff_ms:.0f}")
+                    done_notes += 1
+                    if not pending:
+                        group_idx += 1
 
-                    # 임계값: 300 / 600 / 900 ms
-                    grade, emoji = _grade(abs_diff_ms)
-                    timing_stats[grade] += 1
-                    timing_msg = f"{emoji} {grade:<7} ({sign}ms)"
-
-                    print(f"[{current_idx + 1}/{total_notes}] "
+                    print(f"[{done_notes}/{total_notes}] "
                           f"{pitch_msg}  |  {timing_msg}")
 
-                    # 다음 음을 위해 직전 타건 시각(소스 클럭) 갱신
-                    last_note_ts = event.timestamp
-
-                    current_idx += 1
-                    next_answer = (answers[current_idx]
-                                   if current_idx < total_notes else None)
-                    next_name = (note_to_name(next_answer['note'])
-                                 if next_answer else None)
-                    if next_name:
-                        print(f"👉 다음 목표: {next_name}")
+                    next_notes = upcoming(pending, group_idx)
+                    if next_notes:
+                        print(f"👉 다음 목표: {_names(next_notes)}")
 
                     _emit(on_event, {
                         "type": "note",
-                        "index": current_idx,          # 방금 판정된 음 (1부터)
+                        "index": done_notes,      # 판정이 끝난 음 수 (1부터)
                         "total": total_notes,
                         "pitch_ok": pitch_ok,
                         "played": note_to_name(note),
-                        "expected": note_to_name(target_note),
-                        "grade": grade,
-                        "diff_ms": round(time_diff_ms),
-                        "next": next_name,
-                        "next_midi": (next_answer['note']
-                                      if next_answer else None),
+                        "played_note": note,
+                        "expected": expected_name,
+                        "expected_notes": expected_notes,
+                        "grade": group_grade,
+                        "diff_ms": round(group_diff_ms),
+                        "next": _names(next_notes),
+                        "next_notes": next_notes,
                     })
 
             time.sleep(0.001)
@@ -410,13 +482,16 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
             timing_accuracy = None
             overall_accuracy = pitch_accuracy
         else:
+            # 박자의 분모는 '음 수'가 아니라 '덩어리 수'다 — 화음은 한 박이라
+            # 등급도 한 번만 매겼으므로 음 수로 나누면 점수가 깎여 나온다.
             timing_score_total = (timing_stats['Perfect'] * 100
                                   + timing_stats['Great']  * 80
                                   + timing_stats['Good']   * 50)
-            timing_accuracy = timing_score_total / total_notes
+            timing_accuracy = timing_score_total / total_groups
             overall_accuracy = (pitch_accuracy + timing_accuracy) / 2
 
-        print(f"🎵 전체 건반 수: {total_notes}개")
+        chord_summary = f" (화음 {chord_count}곳 포함)" if chord_count else ""
+        print(f"🎵 전체 건반 수: {total_notes}개{chord_summary}")
         print("-" * 50)
         print(f"🎹 [음계 분석] 정확도: {pitch_accuracy:.1f}%")
         if practice:
@@ -441,6 +516,8 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
         result = {
             "mode": "practice" if practice else "normal",
             "total": total_notes,
+            "total_groups": total_groups,   # 화음을 한 덩어리로 센 박 수
+            "chords": chord_count,
             "pitch_correct": pitch_correct,
             "pitch_wrong": pitch_wrong,
             "wrong_attempts": wrong_attempts,
@@ -455,7 +532,7 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
 
     except KeyboardInterrupt:
         print("\n연주가 중단되었습니다.")
-        _emit(on_event, {"type": "aborted", "index": current_idx,
+        _emit(on_event, {"type": "aborted", "index": done_notes,
                          "total": total_notes})
         return None
     finally:

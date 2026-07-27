@@ -11,6 +11,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+# The hyphen keeps piano-score out of normal imports, so add it explicitly.
+PIANO_SCORE_DIR = SRC_DIR / "piano-score"
+
+if str(PIANO_SCORE_DIR) not in sys.path:
+    sys.path.insert(0, str(PIANO_SCORE_DIR))
+
+from judgement import note_to_ascii
 from ar.overlay import render
 from calibration.calibrator import (
     MOVEMENT_THRESHOLD,
@@ -118,6 +125,19 @@ class PerformanceSession:
             return self.started_at, dict(self.event), self.result, self.error
 
 
+def _ascii_names(notes):
+    """Join MIDI notes as ASCII names ("C4+E4+G4").
+
+    The session reports Korean names ('도4'), but cv2.putText can only draw
+    Hershey vector fonts -- anything outside ASCII comes out as '?'. So the
+    AR window rebuilds the label from the raw MIDI numbers instead.
+    """
+    if not notes:
+        return "-"
+
+    return "+".join(note_to_ascii(note) for note in notes)
+
+
 def _session_status(event, result, error):
     if error:
         return f"MIDI error: {error}", (0, 0, 255)
@@ -136,16 +156,18 @@ def _session_status(event, result, error):
     if event_type == "countdown":
         return f"Get ready: {event['seconds']}", (0, 255, 255)
     if event_type == "start":
-        return f"Play: {event.get('next', '')}", (0, 255, 0)
+        return f"Play: {_ascii_names(event.get('next_notes'))}", (0, 255, 0)
     if event_type == "note":
         progress = f"{event['index']}/{event['total']}"
-        next_text = event.get("next") or "-"
+        next_text = _ascii_names(event.get("next_notes"))
+        played = event.get("played_note")
+        played_text = "-" if played is None else note_to_ascii(played)
 
         # Practice mode: wrong key, stay on the same target.
         if event.get("retry"):
             return (
-                f"{progress}  WRONG {event['played']}  "
-                f"Play: {event['expected']}",
+                f"{progress}  WRONG {played_text}  "
+                f"Play: {_ascii_names(event.get('expected_notes'))}",
                 (0, 0, 255),
             )
         # Practice mode: correct key, no timing grade to show.
@@ -153,7 +175,13 @@ def _session_status(event, result, error):
             mark = "OK" if event.get("first_try") else "OK (retried)"
             return f"{progress}  {mark}  Next: {next_text}", (0, 255, 0)
 
-        pitch = "OK" if event["pitch_ok"] else "WRONG"
+        if event["pitch_ok"]:
+            pitch = "OK"
+        elif played is None:
+            pitch = "MISSED"                # nothing was played in time
+        else:
+            pitch = f"WRONG {played_text}"
+
         return (
             f"{progress}  {pitch}  "
             f"{event['grade']} ({event['diff_ms']:+d}ms)  "
@@ -178,9 +206,9 @@ def _practice_targets(session, event, result):
     if result is not None or event.get("type") not in ("start", "note"):
         return []
 
-    target = event.get("next_midi")
-
-    return [target] if target is not None else []
+    # A chord holds several targets at once, and the ones already played are
+    # dropped from next_notes -- so only the keys still owed light up.
+    return list(event.get("next_notes") or [])
 
 
 def _display_song_name(path):

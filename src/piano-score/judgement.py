@@ -4,9 +4,31 @@ import time
 
 # MIDI 노트 번호 → 음이름 변환
 NOTE_NAMES = ['도', '도#', '레', '레#', '미', '파', '파#', '솔', '솔#', '라', '라#', '시']
+# cv2.putText 는 Hershey 벡터 폰트만 그릴 수 있어 한글이 '?' 로 깨진다.
+# AR 창처럼 ASCII 밖을 못 쓰는 곳을 위한 대체 표기.
+ASCII_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+# 같은 화음으로 묶을 시각 차이(초). MIDI 파일에서 화음은 같은 tick 에
+# 놓여 실측 간격이 0~1ms 인 반면, 이어지는 음 사이는 가장 빠른 곡
+# (twinkle 변주)도 41.7ms 떨어져 있어 20ms 경계면 둘이 섞이지 않는다.
+CHORD_TOLERANCE = 0.02
+
+
+def _octave(note):
+    """MIDI 60(가온다) 이 4옥타브가 되도록 맞춘 옥타브 번호."""
+    return note // 12 - 1
 
 def note_to_name(note):
-    return NOTE_NAMES[note % 12]
+    """MIDI 노트 번호 → 음이름 (60 → '도4').
+
+    옥타브를 붙이지 않으면 도4(60)·도5(72)·도6(84)이 모두 '도'로 보여
+    어느 건반을 치라는 것인지 알 수 없다.
+    """
+    return f"{NOTE_NAMES[note % 12]}{_octave(note)}"
+
+def note_to_ascii(note):
+    """MIDI 노트 번호 → ASCII 음이름 (60 → 'C4'). 한글을 못 그리는 화면용."""
+    return f"{ASCII_NOTE_NAMES[note % 12]}{_octave(note)}"
 
 def get_answer_sheet(file_path):
     mid = mido.MidiFile(file_path)
@@ -17,6 +39,37 @@ def get_answer_sheet(file_path):
         if msg.type == 'note_on' and msg.velocity > 0 and msg.note >= 60:
             sheet.append({'note': msg.note, 'time': absolute_time})
     return sheet
+
+def group_answers(answers, tolerance=CHORD_TOLERANCE):
+    """정답지를 '동시에 눌러야 하는 음' 단위로 묶는다.
+
+    정답지는 note_on 을 시간순으로 늘어놓은 1차원 배열이라, 화음도 그냥
+    나란히 들어간다. 이대로 한 음씩 대조하면 화음을 파일에 적힌 순서대로
+    쳐야만 통과하는데, 사람이 화음을 동시에 누르면 도착 순서는 매번
+    달라진다. 그래서 같은 시각의 음들을 한 덩어리로 묶어 두고 그 안에서는
+    순서를 따지지 않는다.
+
+    Args:
+        answers:   get_answer_sheet() 결과.
+        tolerance: 이 시간(초) 안에 시작하는 음들을 한 화음으로 본다.
+
+    Returns:
+        [(start, end), ...] — answers 의 반열린 구간 목록. 단음은 크기 1.
+    """
+    groups = []
+    start = 0
+
+    for index in range(1, len(answers)):
+        # 그룹의 '첫 음' 과 비교한다. 직전 음과 비교하면 조금씩 어긋난
+        # 음들이 사슬처럼 이어져 한 덩어리로 뭉칠 수 있다.
+        if answers[index]['time'] - answers[start]['time'] > tolerance:
+            groups.append((start, index))
+            start = index
+
+    if answers:
+        groups.append((start, len(answers)))
+
+    return groups
 
 def main():
     filename = "head-shoulder-knee-and-toe.mid"
