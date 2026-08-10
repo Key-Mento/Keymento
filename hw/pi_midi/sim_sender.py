@@ -41,7 +41,9 @@ import argparse
 import json
 import os
 import random
+import select
 import socket
+import sys
 import time
 
 try:
@@ -218,11 +220,69 @@ def run_replay(sender: UdpSender, midi_path: str, speed: float,
     print("\n재생 완료.")
 
 
-def run_keyboard(sender: UdpSender) -> None:
+class _WindowsKeyReader:
+    """msvcrt 기반 논블로킹 키 리더 — 콘솔 모드 변경이 필요 없다."""
+
+    def __init__(self, msvcrt):
+        self._msvcrt = msvcrt
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def poll_key(self) -> str | None:
+        if not self._msvcrt.kbhit():
+            return None
+        return self._msvcrt.getwch().lower()
+
+
+class _PosixKeyReader:
+    """termios(cbreak) 기반 키 리더 — macOS/리눅스 터미널용.
+
+    cbreak 모드는 Enter 없이 한 글자씩 받고 화면 에코를 끈다.
+    Ctrl+C(SIGINT)는 살아 있어 기존 종료 동작과 같다. with 문이
+    끝나면 터미널을 원래 모드로 복구한다.
+    """
+
+    def __init__(self):
+        import termios
+        import tty
+        if not sys.stdin.isatty():
+            raise SystemExit("키보드 모드는 터미널에서 직접 실행해야 합니다.")
+        self._termios = termios
+        self._tty = tty
+        self._fd = sys.stdin.fileno()
+        self._saved = None
+
+    def __enter__(self):
+        self._saved = self._termios.tcgetattr(self._fd)
+        self._tty.setcbreak(self._fd)
+        return self
+
+    def __exit__(self, *exc):
+        self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._saved)
+        return False
+
+    def poll_key(self) -> str | None:
+        ready, _, _ = select.select([sys.stdin], [], [], 0)
+        if not ready:
+            return None
+        return sys.stdin.read(1).lower()
+
+
+def _make_key_reader():
+    """플랫폼에 맞는 키 리더를 고른다 (Windows=msvcrt, 그 외=termios)."""
     try:
         import msvcrt
     except ImportError:
-        raise SystemExit("키보드 모드는 Windows 콘솔에서만 지원됩니다.")
+        return _PosixKeyReader()
+    return _WindowsKeyReader(msvcrt)
+
+
+def run_keyboard(sender: UdpSender) -> None:
+    reader = _make_key_reader()
 
     print("🎹 키보드 모드: 자판이 곧 건반입니다. (q = 종료)")
     print("   흰건반: a  s  d  f  g  h  j  k  l  ;")
@@ -232,21 +292,22 @@ def run_keyboard(sender: UdpSender) -> None:
 
     prev_note = None
     try:
-        while True:
-            if not msvcrt.kbhit():
-                time.sleep(0.005)
-                continue
-            key = msvcrt.getwch().lower()
-            if key == 'q':
-                break
-            note = KEY_TO_NOTE.get(key)
-            if note is None:
-                continue
-            if prev_note is not None:
-                sender.note_off(prev_note)
-            sender.note_on(note)
-            prev_note = note
-            print(f"  → Note ON {note} ({note_name(note)})")
+        with reader:
+            while True:
+                key = reader.poll_key()
+                if key is None:
+                    time.sleep(0.005)
+                    continue
+                if key == 'q':
+                    break
+                note = KEY_TO_NOTE.get(key)
+                if note is None:
+                    continue
+                if prev_note is not None:
+                    sender.note_off(prev_note)
+                sender.note_on(note)
+                prev_note = note
+                print(f"  → Note ON {note} ({note_name(note)})")
     except KeyboardInterrupt:
         pass
     finally:
