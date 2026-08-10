@@ -20,6 +20,9 @@ Keymento 의 다른 부품들은 각자 자기 일만 안다 — 판정 규칙
     받고, stop_event(threading.Event)를 set 해 세션을 중단시킨다.
   - `python session.py` 로 단독 실행도 가능하다(run_from_settings —
     Settings 가 고른 곡과 속도를 읽어 콘솔에서 판정을 돌린다).
+    건반이 0번 포트가 아니면 `--midi-port` 로 지정한다:
+        python src/perform/session.py --list-ports
+        python src/perform/session.py --midi-port 2 --practice
 
 ■ 판정 동작의 요점
 판정 자체는 기존 `piano-score/judgement.py` 를 건드리지 않고 그 함수
@@ -71,7 +74,15 @@ from judgement import (  # noqa: E402
     note_to_name,
 )
 from settings import Settings                          # noqa: E402
-from midi.inputs import LocalMidiInput, create_input_source  # noqa: E402
+from midi.inputs import (  # noqa: E402
+    LocalMidiInput,
+    MidiSystemStuck,
+    UDP_DEFAULT_PORT,
+    create_input_source,
+    list_midi_ports,
+    midi_stuck_help,
+    resolve_midi_port,
+)
 from midi.sound import NotePlayer                      # noqa: E402
 
 
@@ -107,6 +118,12 @@ def _emit(on_event, payload):
 def _names(notes):
     """여러 음을 한 덩어리로 읽히게 잇는다 ('도4+미4+솔4'). 비면 None."""
     return "+".join(note_to_name(n) for n in notes) if notes else None
+
+
+# 지금 목표에 없는 음이 들어왔을 때, 앞으로 몇 덩어리까지 찾아볼지.
+# 너무 크면 한참 뒤에 나올 같은 음에 잘못 붙어 곡을 건너뛴다. 4 덩어리면
+# 한두 음 놓친 것은 따라잡고, 진짜 오타는 오타로 남는다.
+RESYNC_LOOKAHEAD = 4
 
 
 def _grade(abs_diff_ms):
@@ -167,6 +184,25 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
         if remaining:
             return list(remaining)
         return group_notes(index) if index < total_groups else []
+
+    def find_resync(note, index):
+        """`note` 가 앞쪽 어느 덩어리의 음인지 찾는다. 없으면 None.
+
+        한 음을 놓치면 판정은 그 자리에 남고 연주자는 계속 앞으로 간다.
+        그대로 두면 이후 타건이 전부 '지난 목표'와 대조되어, 30초에 칠
+        음을 기다리는 동안 40초 음을 치는데도 31초 음을 보고 있는 상태가
+        된다. 한 번 어긋나면 곡이 끝날 때까지 회복되지 않는다.
+
+        그래서 지금 목표에 없는 음이 들어오면 곧바로 오답 처리하지 않고,
+        앞쪽 몇 덩어리 안에 그 음이 있는지 본다. 있으면 연주자가 이미
+        거기까지 갔다는 뜻이므로 건너뛴 덩어리는 놓친 것으로 접고 그
+        자리로 따라간다.
+        """
+        limit = min(index + 1 + RESYNC_LOOKAHEAD, total_groups)
+        for candidate in range(index + 1, limit):
+            if note in group_notes(candidate):
+                return candidate
+        return None
 
     # === 통계 변수 초기화 ===
     total_notes = len(answers)
@@ -383,6 +419,65 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
                             "next_notes": next_notes,
                         })
                 else:
+                    # ── 0. 따라잡기(re-sync) ─────────────────────────
+                    # 지금 목표에 없는 음이면, 연주자가 이미 앞으로 갔는지
+                    # 먼저 확인한다. 앞쪽 덩어리의 음이라면 놓친 것들을
+                    # 접고 그 자리로 따라간다 — 안 그러면 한 번 밀린 뒤로
+                    # 계속 지난 목표와 대조하게 된다.
+                    skipped_to = None
+                    if note not in pending:
+                        skipped_to = find_resync(note, group_idx)
+
+                    if skipped_to is not None:
+                        # 건너뛴 덩어리는 모두 놓친 것으로 정리한다.
+                        missed_names = []
+                        for skipped in range(group_idx, skipped_to):
+                            lost = (list(pending) if skipped == group_idx
+                                    else group_notes(skipped))
+                            if not lost:
+                                lost = group_notes(skipped)
+                            pitch_wrong += len(lost)
+                            done_notes += len(lost)
+                            timing_stats["Miss"] += 1   # 박자는 덩어리당 한 번
+                            missed_names.append(_names(lost))
+
+                        print(f"[{done_notes}/{total_notes}] "
+                              f"⏭️  [따라잡기] 놓친 음 "
+                              f"{' / '.join(n for n in missed_names if n)} "
+                              f"→ {note_to_name(note)} 로 이동")
+                        _emit(on_event, {
+                            "type": "note",
+                            "index": done_notes,
+                            "total": total_notes,
+                            "pitch_ok": False,
+                            "played": "-",
+                            "played_note": None,
+                            "expected": " / ".join(
+                                n for n in missed_names if n),
+                            "expected_notes": [],
+                            "grade": "Miss",
+                            "diff_ms": 0,
+                            "next": _names(group_notes(skipped_to)),
+                            "next_notes": group_notes(skipped_to),
+                            "resync": True,
+                        })
+
+                        group_idx = skipped_to
+                        pending = group_notes(group_idx)
+                        group_grade = None
+                        group_diff_ms = None
+                        group_size = groups[group_idx][1] - groups[group_idx][0]
+                        is_group_head = True
+                        expected_notes = list(pending)
+                        expected_name = _names(expected_notes)
+
+                        # 따라잡은 자리의 첫 타건은 '제때 친 것'으로 본다.
+                        # 늦은 것은 건너뛴 덩어리를 Miss 로 세면서 이미
+                        # 반영했으므로, 여기서 또 깎으면 이중 감점이다.
+                        base_gap = (group_time(group_idx)
+                                    - group_time(group_idx - 1))
+                        last_note_ts = event.timestamp - base_gap / speed
+
                     # ── 1. 음정(Pitch) 판정 ──────────────────────────
                     # 덩어리 안에서는 순서를 따지지 않는다 — 동시에 눌러야
                     # 하는 음들의 도착 순서는 매번 달라지기 때문이다.
@@ -542,12 +637,17 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
             source.close()
 
 
-def run_from_settings(settings=None, **kwargs):
+def run_from_settings(settings=None, midi_port=0, udp_port=UDP_DEFAULT_PORT,
+                      **kwargs):
     """설정(곡 선택 + 속도)을 읽어 판정을 실행한다.
 
     선택된 곡이 없으면 목록의 첫 곡을 사용한다. GUI 는 원하는 대로
     Settings 를 구성해 넘기거나, 직접 run_judgement 를 호출하면 된다.
     kwargs 는 run_judgement 로 그대로 전달된다(input_source 등).
+
+    midi_port 는 설정이 'local' 일 때 열 rtmidi 포트 번호다. 이 값을
+    넘기지 않으면 언제나 0번 포트가 열려, 실제 건반이 1번 이후에 잡힌
+    PC 에서는 아무 입력도 들어오지 않는다(0번이 보통 loopMIDI 다).
     """
     settings = settings or Settings()
 
@@ -571,10 +671,71 @@ def run_from_settings(settings=None, **kwargs):
         return run_judgement(song.path, speed=settings.speed, **kwargs)
 
     # 설정이 고른 소스(local/udp)를 만들어 세션에 넘긴다.
-    with create_input_source(settings.input_source) as source:
+    with create_input_source(settings.input_source, midi_port=midi_port,
+                             udp_port=udp_port) as source:
         return run_judgement(song.path, speed=settings.speed,
                              input_source=source, **kwargs)
 
 
+def _list_midi_ports():
+    """연결된 로컬 MIDI 입력 포트를 번호와 함께 출력한다."""
+    try:
+        ports = list_midi_ports()
+    except MidiSystemStuck as exc:
+        print(f"\n{exc}\n")
+        print(midi_stuck_help())
+        return
+
+    if not ports:
+        print("MIDI 입력 포트가 없습니다. 건반이 연결되어 있는지 확인하세요.")
+        return
+
+    print("사용 가능한 MIDI 입력 포트:")
+    for index, name in enumerate(ports):
+        print(f"  {index}: {name}")
+    print("\n보통은 그냥 두면 됩니다 — 기본값 auto 가 진짜 건반을 찾습니다.")
+
+
+def _parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Keymento 연주 세션 (콘솔 단독 실행)")
+    parser.add_argument("--midi-port", default="auto",
+                        help="MIDI 입력 포트. 기본 auto 는 가상 포트를 빼고 "
+                             "진짜 건반을 찾는다. 번호(2)나 이름 조각"
+                             "(keystation)으로 직접 고를 수도 있다.")
+    parser.add_argument("--udp-port", type=int, default=UDP_DEFAULT_PORT,
+                        help=f"UDP 입력 수신 포트 (기본: {UDP_DEFAULT_PORT})")
+    parser.add_argument("--practice", dest="practice", action="store_true",
+                        default=None,
+                        help="연습 모드 — 정답을 칠 때까지 대기")
+    parser.add_argument("--normal", dest="practice", action="store_false",
+                        help="일반 모드 — 악보 시계대로 진행하며 박자도 판정")
+    parser.add_argument("--countdown", type=int, default=5,
+                        help="연주 시작 전 카운트다운 초 (기본: 5)")
+    parser.add_argument("--no-sound", action="store_true",
+                        help="건반 소리 에코 끄기")
+    parser.add_argument("--list-ports", action="store_true",
+                        help="MIDI 입력 포트 목록만 출력하고 종료")
+    return parser.parse_args()
+
+
+def _main():
+    args = _parse_args()
+
+    if args.list_ports:
+        _list_midi_ports()
+        return
+
+    kwargs = {"countdown": args.countdown, "sound": not args.no_sound}
+    # --practice/--normal 을 안 주면 설정값(settings.practice_mode)을 따른다.
+    if args.practice is not None:
+        kwargs["practice"] = args.practice
+
+    run_from_settings(midi_port=resolve_midi_port(args.midi_port),
+                      udp_port=args.udp_port, **kwargs)
+
+
 if __name__ == "__main__":
-    run_from_settings()
+    _main()

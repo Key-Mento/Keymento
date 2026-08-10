@@ -1,5 +1,7 @@
 {
-  "selected_song": "twinkle-twinkle-little-star",
-  "speed": 1.0,
-  "input_source": "local"
+  "selected_song": "abc-song-in-c",
+  "speed": 0.5,
+  "input_source": "local",
+  "practice_mode": true,
+  "base_note": 48
 }

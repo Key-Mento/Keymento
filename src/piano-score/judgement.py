@@ -30,6 +30,42 @@ def note_to_ascii(note):
     """MIDI 노트 번호 → ASCII 음이름 (60 → 'C4'). 한글을 못 그리는 화면용."""
     return f"{ASCII_NOTE_NAMES[note % 12]}{_octave(note)}"
 
+def dedupe_chord_notes(answers, tolerance=CHORD_TOLERANCE):
+    """같은 시각에 같은 음이 여러 번 있으면 하나만 남긴다.
+
+    MIDI 파일은 멜로디와 반주를 다른 트랙에 담는데, 둘이 같은 음을 같은
+    시각에 내는 일이 흔하다(abc-song 은 화음 23곳이 전부 그렇다). 트랙을
+    합쳐 note_on 을 늘어놓으면 '도4+도4+미4+솔4' 처럼 같은 음이 두 번
+    들어간 화음이 나온다.
+
+    이대로 두면 한 건반을 동시에 두 번 눌러야만 통과한다. 사람 손으로는
+    불가능하므로 연습 모드가 그 화음에서 영영 멈춘다. 애초에 정답지가
+    물리적으로 칠 수 없는 것을 요구하는 것이므로 여기서 걸러 낸다.
+
+    화음 밖에서 같은 음이 반복되는 것(도-도-솔 처럼)은 그대로 둔다 —
+    시간이 떨어져 있으면 두 번 누르는 게 맞다.
+    """
+    if not answers:
+        return answers
+
+    deduped = []
+    group_start = answers[0]['time']
+    seen = set()
+
+    for entry in answers:
+        # group_answers 와 같은 기준으로 덩어리를 나눈다(그룹의 첫 음 대비).
+        if entry['time'] - group_start > tolerance:
+            group_start = entry['time']
+            seen = set()
+
+        if entry['note'] in seen:
+            continue
+
+        seen.add(entry['note'])
+        deduped.append(entry)
+
+    return deduped
+
 def get_answer_sheet(file_path):
     mid = mido.MidiFile(file_path)
     sheet = []
@@ -38,7 +74,8 @@ def get_answer_sheet(file_path):
         absolute_time += msg.time
         if msg.type == 'note_on' and msg.velocity > 0 and msg.note >= 60:
             sheet.append({'note': msg.note, 'time': absolute_time})
-    return sheet
+    # 화음 안의 중복은 칠 수 없는 요구라 정답지 단계에서 없앤다.
+    return dedupe_chord_notes(sheet)
 
 def group_answers(answers, tolerance=CHORD_TOLERANCE):
     """정답지를 '동시에 눌러야 하는 음' 단위로 묶는다.

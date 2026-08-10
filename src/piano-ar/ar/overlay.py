@@ -4,9 +4,22 @@ import time
 import cv2
 
 
-# The calibrated keyboard view starts at C3. A C4 base placed every score
-# marker one octave lower than the physical key accepted by MIDI judgement.
-FIRST_VISIBLE_MIDI_NOTE = 48  # C3
+# 워프된 화면의 맨 왼쪽 흰건반이 내는 MIDI 번호. 이 값이 실제 건반과
+# 어긋나면 마커가 통째로 옥타브 단위로 밀려, 짚어 준 건반을 눌러도 판정이
+# 안 맞는다(연습 모드는 그 자리에서 영원히 대기한다).
+#
+# 반드시 도(C)여야 한다 — 아래 WHITE_STEPS/BLACK_STEPS 가 한 옥타브를
+# 도에서 시작하는 것으로 보고 자리를 센다.
+#
+# 기본 48(C3)인 이유: 여기 쓰는 Keystation Mini 32 의 맨 왼쪽 키가 48 을
+# 보낸다(run base 로 실측). 흰 19 + 검은 13 = 32키가 C3~G5(48~79)로
+# 그 건반과 정확히 맞는다.
+#
+# songs/ 의 곡들은 60 부터 시작하므로 화면 왼쪽 한 옥타브에는 마커가 뜨지
+# 않는다. 이는 기준음이 틀려서가 아니라 곡이 그 음역을 안 쓰기 때문이다.
+# 건반이 다르면 run base 로 다시 재면 된다.
+DEFAULT_BASE_MIDI_NOTE = 48  # C3
+FIRST_VISIBLE_MIDI_NOTE = DEFAULT_BASE_MIDI_NOTE
 BASE_MIDI_NOTE = FIRST_VISIBLE_MIDI_NOTE  # Backward-compatible alias
 MIN_VISIBLE_DURATION = 0.25
 
@@ -43,8 +56,33 @@ TEST_SEQUENCE = [
 _start_time = None
 
 
-def _midi_note_to_key(note):
-    offset = note - FIRST_VISIBLE_MIDI_NOTE
+def visible_range(whites, blacks, base_note=None):
+    """화면에 그릴 수 있는 MIDI 음의 (최저, 최고) 범위.
+
+    건반 배치(흰 19 + 검은 13)가 정하는 실제 한계를 되돌려 준다. 곡의 음이
+    이 밖으로 나가면 그 음은 마커가 아예 안 뜨므로, 곡을 고를 때 미리
+    걸러 내는 데 쓴다.
+    """
+    low = FIRST_VISIBLE_MIDI_NOTE if base_note is None else base_note
+    high = low
+    note = low
+
+    while True:
+        resolved = _midi_note_to_key(note, base_note)
+        if resolved is None:
+            break
+        is_white, index = resolved
+        if index >= len(whites if is_white else blacks):
+            break
+        high = note
+        note += 1
+
+    return low, high
+
+
+def _midi_note_to_key(note, base_note=None):
+    offset = note - (FIRST_VISIBLE_MIDI_NOTE if base_note is None
+                     else base_note)
 
     if offset < 0:
         return None
@@ -99,9 +137,9 @@ def _draw_note(output, key, is_white, progress):
     _draw_marker(output, key, is_white, alpha, color)
 
 
-def _resolve_key(note, whites, blacks):
+def _resolve_key(note, whites, blacks, base_note=None):
     """Return (keys, index, is_white) for a MIDI note, or None if off-screen."""
-    key_ref = _midi_note_to_key(int(note))
+    key_ref = _midi_note_to_key(int(note), base_note)
 
     if key_ref is None:
         return None
@@ -115,7 +153,7 @@ def _resolve_key(note, whites, blacks):
     return keys[key_idx], is_white
 
 
-def _render_active(frame, whites, blacks, active_notes):
+def _render_active(frame, whites, blacks, active_notes, base_note=None):
     """Pulse the keys that must be played right now (practice mode)."""
     output = frame.copy()
 
@@ -124,7 +162,7 @@ def _render_active(frame, whites, blacks, active_notes):
     alpha = low + (high - low) * wave
 
     for note in active_notes:
-        resolved = _resolve_key(note, whites, blacks)
+        resolved = _resolve_key(note, whites, blacks, base_note)
 
         if resolved is None:
             continue
@@ -136,17 +174,21 @@ def _render_active(frame, whites, blacks, active_notes):
 
 
 def render(frame, whites, blacks, notes=None, playback_time=None,
-           active_notes=None):
+           active_notes=None, base_note=None):
     """Draw note markers over the warped keyboard view.
 
     active_notes overrides the score clock: the listed MIDI notes pulse until
     they are cleared. Practice mode needs this because its clock does not
     advance -- the same target must stay visible until it is played.
+
+    base_note is the MIDI number of the leftmost white key. None uses the
+    module default; pass the configured value so the markers line up with
+    whatever octave the physical keyboard is actually sending.
     """
     global _start_time
 
     if active_notes is not None:
-        return _render_active(frame, whites, blacks, active_notes)
+        return _render_active(frame, whites, blacks, active_notes, base_note)
 
     if _start_time is None:
         _start_time = time.time()
@@ -170,7 +212,7 @@ def render(frame, whites, blacks, notes=None, playback_time=None,
         if elapsed < 0 or elapsed > duration:
             continue
 
-        resolved = _resolve_key(note_event["note"], whites, blacks)
+        resolved = _resolve_key(note_event["note"], whites, blacks, base_note)
 
         if resolved is None:
             continue

@@ -31,6 +31,13 @@ DEFAULT_INPUT_SOURCE = "local"
 # True 면 정답 건반을 칠 때까지 다음 음으로 넘어가지 않는다(박자 판정 없음).
 DEFAULT_PRACTICE_MODE = False
 
+# ── AR 기준음 ─────────────────────────────────────────────────────
+# 워프된 화면의 맨 왼쪽 흰건반이 내는 MIDI 번호. 실제 건반과 어긋나면
+# 마커가 옥타브 단위로 통째로 밀린다. 반드시 도(C, %12==0)여야 한다.
+DEFAULT_BASE_NOTE = 48          # C3 (Keystation Mini 32 의 맨 왼쪽 키)
+MIN_BASE_NOTE = 24              # C1
+MAX_BASE_NOTE = 96              # C7
+
 # 프로젝트 루트: src/settings/__init__.py → 세 단계 위
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "data", "settings.json")
@@ -47,6 +54,9 @@ __all__ = [
     "INPUT_SOURCES",
     "DEFAULT_INPUT_SOURCE",
     "DEFAULT_PRACTICE_MODE",
+    "DEFAULT_BASE_NOTE",
+    "MIN_BASE_NOTE",
+    "MAX_BASE_NOTE",
 ]
 
 
@@ -60,6 +70,7 @@ class Settings:
         self._speed = SpeedControl()
         self._input_source: str = DEFAULT_INPUT_SOURCE
         self._practice_mode: bool = DEFAULT_PRACTICE_MODE
+        self._base_note: int = DEFAULT_BASE_NOTE
         self.load()
 
     @property
@@ -113,12 +124,41 @@ class Settings:
         self._practice_mode = bool(enabled)
         return self._practice_mode
 
+    # ── AR 기준음 ─────────────────────────────────────────────────
+    @property
+    def base_note(self) -> int:
+        """AR 화면 맨 왼쪽 흰건반의 MIDI 번호."""
+        return self._base_note
+
+    def set_base_note(self, note) -> int:
+        """기준음을 설정한다. 도(C)가 아니거나 범위 밖이면 ValueError.
+
+        아무 음이나 받아 '그 이하의 가장 가까운 도'로 내림하지 않는 이유:
+        조용히 보정하면 잘못 넘긴 값을 눈치채지 못한다. 건반에서 읽어
+        내림하는 일은 호출자(detect_base_note)가 명시적으로 한다.
+        """
+        try:
+            note = int(note)
+        except (TypeError, ValueError):
+            raise ValueError(f"기준음은 정수여야 합니다: {note!r}")
+
+        if not MIN_BASE_NOTE <= note <= MAX_BASE_NOTE:
+            raise ValueError(
+                f"기준음은 {MIN_BASE_NOTE}~{MAX_BASE_NOTE} 여야 합니다: {note}")
+        if note % 12 != 0:
+            raise ValueError(
+                f"기준음은 도(C)여야 합니다 (12의 배수): {note}")
+
+        self._base_note = note
+        return self._base_note
+
     # ── 영속화 ───────────────────────────────────────────────────
     def to_dict(self) -> dict:
         return {"selected_song": self.songs.selected_id,
                 "speed": self._speed.value,
                 "input_source": self._input_source,
-                "practice_mode": self._practice_mode}
+                "practice_mode": self._practice_mode,
+                "base_note": self._base_note}
 
     def save(self) -> None:
         """현재 설정을 config_path(JSON)에 저장한다."""
@@ -152,3 +192,10 @@ class Settings:
         practice_mode = data.get("practice_mode")
         if isinstance(practice_mode, bool):
             self._practice_mode = practice_mode
+
+        base_note = data.get("base_note")
+        if base_note is not None:
+            try:
+                self.set_base_note(base_note)
+            except ValueError:
+                pass
