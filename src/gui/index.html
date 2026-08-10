@@ -70,6 +70,8 @@
   }
   .segment button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
   #modeDesc { margin-top: 10px; font-size: 13px; line-height: 1.5; color: var(--muted); }
+  #speedNote { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  #speedNote:empty { display: none; }
 
   /* 시작/중지 */
   #mainBtn {
@@ -85,8 +87,13 @@
   #liveCard { display: none; }
   #countdownNum { font-size: 64px; font-weight: 800; text-align: center; color: var(--accent); }
   #progressWrap { display: none; }
-  #nextNote { text-align: center; font-size: 15px; color: var(--muted); margin-bottom: 10px; }
-  #nextNote b { color: var(--text); font-size: 22px; margin-left: 6px; }
+  /* AR 창 없이 돌릴 때(run nocam)는 여기가 유일한 '쳐야 할 음' 표시다.
+     멀리서도 보이도록 크게 잡는다. */
+  #nextNote { text-align: center; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  #nextNote b { display: block; color: var(--accent); font-size: 46px; line-height: 1.15; margin-top: 2px; }
+  #lastHit { text-align: center; font-size: 20px; font-weight: 700; min-height: 26px; margin-bottom: 10px; }
+  #lastHit.ok { color: var(--good); }
+  #lastHit.bad { color: var(--bad); }
   .bar { height: 8px; border-radius: 999px; background: var(--card-edge); overflow: hidden; margin-bottom: 6px; }
   .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .2s; }
   #progressText { font-size: 13px; color: var(--muted); text-align: right; margin-bottom: 10px; }
@@ -128,6 +135,7 @@
   <section class="card">
     <h2>속도</h2>
     <div class="segment" id="speedRow"></div>
+    <div id="speedNote"></div>
   </section>
 
   <section class="card">
@@ -150,7 +158,8 @@
     <h2>진행 상황</h2>
     <div id="countdownNum"></div>
     <div id="progressWrap">
-      <div id="nextNote">다음 목표<b id="nextNoteName">-</b></div>
+      <div id="nextNote">지금 쳐야 할 건반<b id="nextNoteName">-</b></div>
+      <div id="lastHit"></div>
       <div class="bar"><i id="barFill"></i></div>
       <div id="progressText"></div>
       <div id="feed"></div>
@@ -231,6 +240,12 @@ function render(s) {
     btn.onclick = () => postJSON("/api/speed", { speed: p });
     speedRow.appendChild(btn);
   }
+  // AR 창에서 띄우면 악보를 눈으로 따라갈 수 있게 배율이 한 번 더
+  // 곱해진다. 고른 값과 실제 값이 달라지므로 숨기지 않고 알려 준다.
+  $("speedNote").textContent =
+    Math.abs(s.speed_scale - 1) < 1e-9
+      ? ""
+      : `AR 배율 ${s.speed_scale}x 적용 → 실제 ${s.effective_speed.toFixed(2)}x`;
 
   // 입력 소스
   const inputRow = $("inputRow");
@@ -284,6 +299,20 @@ function render(s) {
     $("nextNoteName").textContent = p.next || "🎉";
     $("barFill").style.width = p.total ? (100 * p.index / p.total) + "%" : "0";
     $("progressText").textContent = p.index + " / " + p.total;
+
+    // 방금 친 음의 정오답. AR 창이 없을 때 유일한 즉시 피드백이라
+    // 목표 바로 아래에 크게 띄운다.
+    const hit = $("lastHit");
+    if (p.last_note === null || p.last_ok === null) {
+      hit.textContent = "";
+      hit.className = "";
+    } else if (p.last_ok) {
+      hit.textContent = "✅ " + (s.practice && p.retries ? "통과" : "정답");
+      hit.className = "ok";
+    } else {
+      hit.textContent = "❌ 다시 — " + (p.next || "");
+      hit.className = "bad";
+    }
   } else if (!running) {
     if (s.state === "idle") live.style.display = "none";
     $("countdownNum").textContent = "";

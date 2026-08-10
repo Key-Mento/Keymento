@@ -38,17 +38,32 @@ from perform.session import run_judgement                    # noqa: E402
 
 _INDEX_PATH = Path(__file__).resolve().parent / "index.html"
 
+# 세션 진행 상태의 초기값. AR 창(piano-ar/main.py)이 매 프레임 읽으므로
+# 키가 빠지는 일이 없도록 한 곳에서 모양을 정해 둔다.
+_EMPTY_PROGRESS = {
+    "index": 0, "total": 0, "next": None, "next_notes": [],
+    "last_note": None, "last_ok": None, "retries": 0,
+}
+
 
 class SessionManager:
     """판정 세션을 백그라운드 스레드로 돌리고 상태/이벤트를 보관한다."""
 
     def __init__(self, settings, midi_port=0, udp_port=UDP_DEFAULT_PORT,
-                 countdown=5, sound=True):
+                 countdown=5, sound=True, speed_scale=1.0,
+                 source_factory=None):
         self.settings = settings
         self.midi_port = midi_port
         self.udp_port = udp_port
         self.countdown = countdown
         self.sound = sound
+        # 입력 소스를 직접 만들어 주는 함수 (song, speed, practice)
+        # -> MidiInputSource. None 이면 설정(local/udp)대로 만든다.
+        # 건반 없이 돌리는 데모 모드가 이 자리에 자기 소스를 끼운다.
+        self.source_factory = source_factory
+        # 설정 속도에 한 번 더 곱하는 배율. AR 창은 악보가 눈으로 따라갈
+        # 수 있을 만큼 느려야 해서 1 보다 작은 값을 쓴다(piano-ar/main.py).
+        self.speed_scale = speed_scale
 
         self._lock = threading.Lock()
         self._thread = None
@@ -59,9 +74,12 @@ class SessionManager:
         # UI 표시용 상태 (폴링 응답에 그대로 나감)
         self.state = "idle"   # idle|countdown|playing|done|aborted|error
         self.countdown_left = 0
-        self.progress = {"index": 0, "total": 0, "next": None}
+        self.progress = dict(_EMPTY_PROGRESS)
         self.result = None
         self.error = None
+        # 세션이 시작된 시점의 모드. 진행 중에 설정이 바뀌어도 화면 표시가
+        # 세션 동작과 어긋나지 않도록 start() 에서 한 번 고정한다.
+        self.active_practice = None
 
     # ── 상태 조회 ─────────────────────────────────────────────────
     def running(self):
@@ -77,6 +95,7 @@ class SessionManager:
             "state": self.state,
             "countdown": self.countdown_left,
             "progress": dict(self.progress),
+            "active_practice": self.active_practice,
             "result": self.result,
             "error": self.error,
             "seq": self._seq,
@@ -100,9 +119,10 @@ class SessionManager:
             self._stop.clear()
             self.state = "countdown"
             self.countdown_left = self.countdown
-            self.progress = {"index": 0, "total": 0, "next": None}
+            self.progress = dict(_EMPTY_PROGRESS)
             self.result = None
             self.error = None
+            self.active_practice = self.settings.practice_mode
             self._thread = threading.Thread(
                 target=self._run, args=(song,), daemon=True)
             self._thread.start()
@@ -110,6 +130,11 @@ class SessionManager:
 
     def stop(self):
         self._stop.set()
+
+    @property
+    def effective_speed(self):
+        """세션에 실제로 넘어가는 속도 (설정값 × 배율)."""
+        return self.settings.speed * self.speed_scale
 
     # ── 내부 동작 ─────────────────────────────────────────────────
     def _push(self, event):
@@ -125,12 +150,28 @@ class SessionManager:
             elif kind == "start":
                 self.state = "playing"
                 self.countdown_left = 0
-                self.progress = {"index": 0, "total": event["total"],
-                                 "next": event["next"]}
+                self.progress = dict(
+                    _EMPTY_PROGRESS,
+                    total=event["total"],
+                    next=event["next"],
+                    next_notes=list(event.get("next_notes") or []),
+                )
             elif kind == "note":
-                self.progress = {"index": event["index"],
-                                 "total": event["total"],
-                                 "next": event["next"]}
+                # next_notes/last_* 는 AR 창이 쓴다 — 짚어 줄 건반의 raw
+                # MIDI 번호와, 방금 틀렸는지(빨간 플래시 조건)가 필요하다.
+                if event.get("retry"):
+                    retries = self.progress.get("retries", 0) + 1
+                else:
+                    retries = self.progress.get("retries", 0)
+                self.progress = {
+                    "index": event["index"],
+                    "total": event["total"],
+                    "next": event["next"],
+                    "next_notes": list(event.get("next_notes") or []),
+                    "last_note": event.get("played_note"),
+                    "last_ok": event.get("pitch_ok"),
+                    "retries": retries,
+                }
             elif kind == "done":
                 self.state = "done"
                 self.result = event["result"]
@@ -143,9 +184,13 @@ class SessionManager:
     def _run(self, song):
         source = None
         try:
-            source = create_input_source(
-                self.settings.input_source,
-                midi_port=self.midi_port, udp_port=self.udp_port)
+            if self.source_factory is not None:
+                source = self.source_factory(song, self.effective_speed,
+                                             self.active_practice)
+            else:
+                source = create_input_source(
+                    self.settings.input_source,
+                    midi_port=self.midi_port, udp_port=self.udp_port)
         except Exception as exc:  # noqa: BLE001 — 장치 부재 등은 UI 로 전달
             self._push({"type": "error", "message": str(exc)})
             return
@@ -153,7 +198,7 @@ class SessionManager:
         try:
             run_judgement(
                 song.path,
-                speed=self.settings.speed,
+                speed=self.effective_speed,
                 countdown=self.countdown,
                 sound=self.sound,
                 input_source=source,
@@ -205,6 +250,8 @@ def _make_handler(manager: SessionManager):
                 "input": settings.input_source,
                 "input_sources": list(INPUT_SOURCES),
                 "practice": settings.practice_mode,
+                "speed_scale": manager.speed_scale,
+                "effective_speed": manager.effective_speed,
             }
             payload.update(manager.snapshot(since))
             return payload
@@ -284,6 +331,15 @@ def _make_handler(manager: SessionManager):
     return _Handler
 
 
+def create_server(manager, host="0.0.0.0", port=8321):
+    """세션 매니저에 묶인 HTTP 서버를 만든다(아직 돌리지는 않는다).
+
+    AR 창(piano-ar/main.py)이 같은 매니저를 공유한 채 서버를 별도
+    스레드로 띄우기 위한 진입점이다. 바인딩 실패는 OSError 로 나간다.
+    """
+    return ThreadingHTTPServer((host, port), _make_handler(manager))
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Keymento 웹 UI 서버")
     parser.add_argument("--host", default="0.0.0.0",
@@ -313,8 +369,7 @@ def main():
     )
 
     try:
-        server = ThreadingHTTPServer((args.host, args.port),
-                                     _make_handler(manager))
+        server = create_server(manager, args.host, args.port)
     except OSError as exc:
         print(f"포트 {args.port} 바인딩 실패: {exc}")
         print("다른 프로그램이 포트를 쓰고 있을 수 있습니다. "
