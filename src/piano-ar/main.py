@@ -87,6 +87,7 @@ MIDI_EXTENSIONS = {".mid", ".midi"}
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 WINDOW_NAME = "Keymento AR"
+AR_WINDOW_WIDTH = 1280
 
 # 워프 결과는 800x200 로 납작하다(utils/transform.py). 그 위에 글자를
 # 얹으면 건반이 가려지므로, 아래에 별도 HUD 띠를 붙이고 거기에 그린다.
@@ -126,7 +127,12 @@ def ascii_names(notes):
 
 def draw_text(image, text, origin, color=COLOR_INFO, scale=0.55, thickness=2):
     """읽히도록 검은 외곽선을 깔고 글자를 그린다."""
-    cv2.putText(image, text, origin, FONT, scale, (0, 0, 0), thickness + 3,
+    factor = image.shape[1] / 800
+    origin = tuple(round(value * factor) for value in origin)
+    scale *= factor
+    outline = max(1, round((thickness + 3) * factor))
+    thickness = max(1, round(thickness * factor))
+    cv2.putText(image, text, origin, FONT, scale, (0, 0, 0), outline,
                 cv2.LINE_AA)
     cv2.putText(image, text, origin, FONT, scale, color, thickness,
                 cv2.LINE_AA)
@@ -141,6 +147,8 @@ def draw_text_right(image, text, right_x, y, color=COLOR_INFO, scale=0.5,
 
 def draw_center_text(image, text, color=COLOR_INFO, scale=3.0, dy=0):
     h, w = image.shape[:2]
+    factor = w / 800
+    h, w = h / factor, w / factor
     (tw, th), _ = cv2.getTextSize(text, FONT, scale, 5)
     draw_text(image, text, ((w - tw) // 2, (h + th) // 2 + dy), color,
               scale=scale, thickness=5)
@@ -148,14 +156,17 @@ def draw_center_text(image, text, color=COLOR_INFO, scale=3.0, dy=0):
 
 def draw_progress_bar(image, ratio, y, color=COLOR_ACCENT):
     h, w = image.shape[:2]
-    x1, x2 = 15, w - 15
+    factor = w / 800
+    x1, x2 = round(15 * factor), w - round(15 * factor)
+    y = round(y * factor)
+    bar_height = round(10 * factor)
 
-    cv2.rectangle(image, (x1, y), (x2, y + 10), (70, 70, 70), -1)
+    cv2.rectangle(image, (x1, y), (x2, y + bar_height), (70, 70, 70), -1)
 
     fill = int(x1 + (x2 - x1) * max(0.0, min(ratio, 1.0)))
 
     if fill > x1:
-        cv2.rectangle(image, (x1, y), (fill, y + 10), color, -1)
+        cv2.rectangle(image, (x1, y), (fill, y + bar_height), color, -1)
 
 
 def attach_hud_panel(warped):
@@ -164,9 +175,14 @@ def attach_hud_panel(warped):
     Returns (canvas, hud_top) — hud_top 아래가 글자를 그려도 되는 영역.
     """
     h, w = warped.shape[:2]
-    canvas = np.empty((h + HUD_HEIGHT, w, 3), dtype=warped.dtype)
-    canvas[:h] = warped
-    canvas[h:] = HUD_BG
+    # Enlarge the finished keyboard image, then draw HUD text at native resolution.
+    factor = AR_WINDOW_WIDTH / w
+    display_h = round(h * factor)
+    canvas = np.empty((display_h + round(HUD_HEIGHT * factor),
+                       AR_WINDOW_WIDTH, 3), dtype=warped.dtype)
+    canvas[:display_h] = cv2.resize(warped, (AR_WINDOW_WIDTH, display_h),
+                                  interpolation=cv2.INTER_LINEAR)
+    canvas[display_h:] = HUD_BG
 
     return canvas, h
 
@@ -367,7 +383,7 @@ def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
     elif state == "countdown":
         draw_text(canvas, "Get ready...", (15, hud_top + 56), COLOR_WARN,
                   scale=0.6)
-        draw_center_text(canvas[:hud_top], str(countdown), COLOR_ACCENT,
+        draw_center_text(canvas[:round(hud_top * canvas.shape[1] / 800)], str(countdown), COLOR_ACCENT,
                          scale=3.0)
 
     elif state == "playing":
@@ -403,7 +419,7 @@ def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
             detail = (f"pitch {result['pitch_accuracy']:.0f}%"
                       f"   timing {timing_text}")
 
-        draw_center_text(canvas[:hud_top], headline, COLOR_OK, scale=1.7)
+        draw_center_text(canvas[:round(hud_top * canvas.shape[1] / 800)], headline, COLOR_OK, scale=1.7)
         draw_text(canvas, detail, (15, hud_top + 60), COLOR_INFO, scale=0.65)
         draw_progress_bar(canvas, 1.0, hud_top + 94, COLOR_OK)
 
@@ -437,6 +453,7 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
     update_count = 0
     auto_update_enabled = True
     playback_start_time = time.time()
+    window_initialized = False
 
     while True:
         ret, frame = cap.read()
@@ -562,6 +579,16 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
         # ArUco 상태는 HUD 우측에 — 건반 영역은 오버레이 전용으로 비운다.
         draw_text_right(output, status_message, w - 15, hud_top + 26,
                         status_color, scale=0.5)
+
+        if not window_initialized:
+            # Keep rendering coordinates intact; enlarge only the display window.
+            cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+            output_height, output_width = output.shape[:2]
+            cv2.resizeWindow(
+                WINDOW_NAME, AR_WINDOW_WIDTH,
+                round(AR_WINDOW_WIDTH * output_height / output_width),
+            )
+            window_initialized = True
 
         cv2.imshow(WINDOW_NAME, output)
 
