@@ -656,8 +656,8 @@ def parse_args():
                         help="웹 UI 바인딩 주소 (기본: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8321,
                         help="웹 UI HTTP 포트 (기본: 8321)")
-    parser.add_argument("--camera", type=int, default=0,
-                        help="카메라 장치 번호 (기본: 0)")
+    parser.add_argument("--camera", type=int, default=None,
+                        help="카메라 장치 번호 (생략: 1번 우선, 실패하면 0번)")
     parser.add_argument("--countdown", type=int, default=5,
                         help="시작 전 카운트다운 초 (기본: 5)")
     parser.add_argument("--speed-scale", type=float,
