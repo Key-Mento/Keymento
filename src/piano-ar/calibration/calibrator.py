@@ -364,13 +364,13 @@ def manual_calibrate(cap):
     return result
 
 
-def calibrate(cap):
+def calibrate(cap, reuse_saved=True, on_switch=None):
     """Return calibration points for the AR loop.
 
     Saved points are reused immediately. If there are no saved points, this
     waits for either ArUco IDs 0, 1, 2, 3 or a manual calibration request.
     """
-    calibration_points = load_points()
+    calibration_points = load_points() if reuse_saved else None
 
     if calibration_points is not None:
         return calibration_points
@@ -379,9 +379,11 @@ def calibrate(cap):
     window_name = "Initial Calibration"
     cv2.namedWindow(window_name)
 
-    print("No saved calibration points found.")
+    print("Camera calibration required.")
     print("Show ArUco markers ID 0, 1, 2, 3 or press M for manual setup.")
     print("ESC: cancel")
+    if on_switch is not None:
+        print("C: switch camera 0/1")
 
     while True:
         ret, frame = cap.read()
@@ -412,7 +414,7 @@ def calibrate(cap):
             frame,
             detected_points,
             None,
-            "Show ArUco markers or press M",
+            "Show markers / M: manual" + (" / C: camera" if on_switch else ""),
             (0, 0, 255),
             0,
             True
@@ -427,6 +429,10 @@ def calibrate(cap):
 
         if key == 27:
             break
+
+        if key in (ord("c"), ord("C")) and on_switch is not None:
+            on_switch()
+            continue
 
         if key in (ord("m"), ord("M")):
             manual_result = manual_calibrate(cap)

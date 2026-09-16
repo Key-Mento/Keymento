@@ -1,5 +1,34 @@
 import cv2
 
+
+class Camera:
+    """Keep the active device and its index together when switching cameras."""
+
+    def __init__(self, cap, index):
+        self._cap = cap
+        self.index = index
+
+    def read(self):
+        return self._cap.read()
+
+    def release(self):
+        self._cap.release()
+
+    def switch(self):
+        target = 0 if self.index != 0 else 1
+        try:
+            replacement = open_camera(target)
+        except (RuntimeError, cv2.error) as error:
+            print(f"카메라 전환 실패: {error} 현재 {self.index}번을 유지합니다.")
+            return False
+
+        self._cap.release()
+        self._cap = replacement._cap
+        self.index = replacement.index
+        print(f"카메라 전환 완료: {self.index}번. 새 카메라를 보정하세요.")
+        return True
+
+
 def open_camera(index=None):
     """Try camera 1 before 0; an explicit index overrides this convention.
 
@@ -24,7 +53,7 @@ def open_camera(index=None):
                 if ok and frame is not None and frame.size > 0:
                     print(f"카메라 선택: {candidate}번")
                     selected = True
-                    return cap
+                    return Camera(cap, candidate)
         except cv2.error:
             continue
         finally:

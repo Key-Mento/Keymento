@@ -105,7 +105,7 @@ COLOR_BAD = (0, 0, 255)
 COLOR_INFO = (255, 255, 255)
 COLOR_ACCENT = (255, 200, 0)
 
-HELP_LINE = "C: camera 0/1  M: manual  A: auto  R: reset  P: replay  ESC: quit"
+HELP_LINE = "M: manual  A: auto  R: reset ArUco  P: replay  ESC: quit"
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -596,20 +596,6 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
 
         if key == 27:
             break
-
-        if key in (ord("c"), ord("C")):
-            if cap.switch():
-                # Coordinates from the previous camera are not valid here.
-                points = calibrate(cap, reuse_saved=False, on_switch=cap.switch)
-                if points is None:
-                    print("Camera calibration canceled")
-                    break
-                calibration_points = points.copy()
-                matrix = get_matrix(calibration_points)
-                candidate_points = None
-                stable_count = 0
-                update_count = 0
-            continue
 
         if key in (ord("m"), ord("M")):
             manual_result = manual_calibrate(cap)
@@ -1126,7 +1112,7 @@ def main():
             return
 
         cap = open_camera(args.camera)
-        points = calibrate(cap, on_switch=cap.switch)
+        points = calibrate(cap)
 
         if points is None or len(points) != 4:
             print("Calibration failed or canceled")
