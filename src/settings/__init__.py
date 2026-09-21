@@ -38,6 +38,11 @@ DEFAULT_BASE_NOTE = 48          # C3 (Keystation Mini 32 의 맨 왼쪽 키)
 MIN_BASE_NOTE = 24              # C1
 MAX_BASE_NOTE = 96              # C7
 
+# ── 카메라 방향 ───────────────────────────────────────────────────
+# True 면 카메라 프레임을 180° 돌린다. 노트북 화면에 붙인 카메라처럼
+# 연주자 맞은편에서 건반을 보면 화면이 거꾸로 나오기 때문이다.
+DEFAULT_CAMERA_ROTATE_180 = False
+
 # 프로젝트 루트: src/settings/__init__.py → 세 단계 위
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "data", "settings.json")
@@ -57,6 +62,7 @@ __all__ = [
     "DEFAULT_BASE_NOTE",
     "MIN_BASE_NOTE",
     "MAX_BASE_NOTE",
+    "DEFAULT_CAMERA_ROTATE_180",
 ]
 
 
@@ -71,6 +77,7 @@ class Settings:
         self._input_source: str = DEFAULT_INPUT_SOURCE
         self._practice_mode: bool = DEFAULT_PRACTICE_MODE
         self._base_note: int = DEFAULT_BASE_NOTE
+        self._camera_rotate_180: bool = DEFAULT_CAMERA_ROTATE_180
         self.load()
 
     @property
@@ -152,13 +159,24 @@ class Settings:
         self._base_note = note
         return self._base_note
 
+    # ── 카메라 방향 ───────────────────────────────────────────────
+    @property
+    def camera_rotate_180(self) -> bool:
+        """True 면 카메라 프레임을 180° 돌려서 쓴다."""
+        return self._camera_rotate_180
+
+    def set_camera_rotate_180(self, enabled: bool) -> bool:
+        self._camera_rotate_180 = bool(enabled)
+        return self._camera_rotate_180
+
     # ── 영속화 ───────────────────────────────────────────────────
     def to_dict(self) -> dict:
         return {"selected_song": self.songs.selected_id,
                 "speed": self._speed.value,
                 "input_source": self._input_source,
                 "practice_mode": self._practice_mode,
-                "base_note": self._base_note}
+                "base_note": self._base_note,
+                "camera_rotate_180": self._camera_rotate_180}
 
     def save(self) -> None:
         """현재 설정을 config_path(JSON)에 저장한다."""
@@ -199,3 +217,7 @@ class Settings:
                 self.set_base_note(base_note)
             except ValueError:
                 pass
+
+        camera_rotate_180 = data.get("camera_rotate_180")
+        if isinstance(camera_rotate_180, bool):
+            self._camera_rotate_180 = camera_rotate_180

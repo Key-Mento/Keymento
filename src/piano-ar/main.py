@@ -26,13 +26,20 @@
 """
 
 import argparse
+import os
 import sys
 import threading
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
+# Windows 기본 카메라 백엔드(MSMF)는 하드웨어 변환이 켜져 있으면 일부 USB
+# 웹캠을 여는 데 16초, 해상도를 바꿀 때마다 또 17초씩 걸린다(실측: 1번 웹캠
+# 55초 → 끄면 0.8초, 30fps 그대로). cv2 를 불러오기 전에 꺼야 적용된다.
+# DSHOW 로 바꾸면 빨리 열리지만 720p 에서 10fps 로 떨어진다.
+os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
 
 # Project paths must be registered before importing local modules.
 SRC_DIR = Path(__file__).resolve().parents[1]
@@ -65,7 +72,13 @@ from calibration.calibrator import (                            # noqa: E402
 )
 from camera.capture import open_camera                          # noqa: E402
 from keyboard.mapping import build_keys                         # noqa: E402
-from utils.transform import get_matrix, warp                    # noqa: E402
+from utils.transform import (                                   # noqa: E402
+    get_matrix,
+    rotate_points_180,
+    unwarp,
+    unwarp_points,
+    warp,
+)
 
 from gui.server import SessionManager, create_server            # noqa: E402
 from midi.inputs import (                                       # noqa: E402
@@ -105,7 +118,14 @@ COLOR_BAD = (0, 0, 255)
 COLOR_INFO = (255, 255, 255)
 COLOR_ACCENT = (255, 200, 0)
 
-HELP_LINE = "C: camera 0/1  M: manual  A: auto  R: reset  P: replay  ESC: quit"
+# 전체 화면 보기에서 원본 카메라 위에 투영하는 요소
+COLOR_WHITE_KEY = (0, 255, 0)
+COLOR_BLACK_KEY = (0, 200, 255)
+COLOR_CALIBRATION = (0, 255, 255)   # 노랑: 실제로 적용 중인 캘리브레이션
+COLOR_DETECTED = (255, 0, 255)      # 자홍: 이번 프레임에서 찾은 ArUco 기준점
+
+HELP_LINE = ("V: view  F: flip  C: camera 0/1  M: manual  A: auto  R: reset  "
+             "P: replay  ESC: quit")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -169,22 +189,93 @@ def draw_progress_bar(image, ratio, y, color=COLOR_ACCENT):
         cv2.rectangle(image, (x1, y), (fill, y + bar_height), color, -1)
 
 
-def attach_hud_panel(warped):
-    """건반 화면 아래에 HUD 띠를 붙인 캔버스를 만든다.
+def attach_hud_panel(scene):
+    """화면(워프 건반 또는 원본 카메라) 아래에 HUD 띠를 붙인 캔버스를 만든다.
 
-    Returns (canvas, hud_top) — hud_top 아래가 글자를 그려도 되는 영역.
+    Returns (canvas, hud_top) — hud_top 은 draw_text 가 쓰는 가로 800
+    기준 좌표에서 띠가 시작하는 y. 그 아래가 글자를 그려도 되는 영역.
     """
-    h, w = warped.shape[:2]
-    # Enlarge the finished keyboard image, then draw HUD text at native resolution.
-    factor = AR_WINDOW_WIDTH / w
-    display_h = round(h * factor)
-    canvas = np.empty((display_h + round(HUD_HEIGHT * factor),
-                       AR_WINDOW_WIDTH, 3), dtype=warped.dtype)
-    canvas[:display_h] = cv2.resize(warped, (AR_WINDOW_WIDTH, display_h),
-                                  interpolation=cv2.INTER_LINEAR)
+    h, w = scene.shape[:2]
+    # Enlarge the finished image, then draw HUD text at native resolution.
+    display_h = round(h * AR_WINDOW_WIDTH / w)
+    hud_h = round(HUD_HEIGHT * AR_WINDOW_WIDTH / 800)
+    canvas = np.empty((display_h + hud_h, AR_WINDOW_WIDTH, 3),
+                      dtype=scene.dtype)
+    if w == AR_WINDOW_WIDTH:
+        canvas[:display_h] = scene
+    else:
+        canvas[:display_h] = cv2.resize(scene, (AR_WINDOW_WIDTH, display_h),
+                                        interpolation=cv2.INTER_LINEAR)
     canvas[display_h:] = HUD_BG
 
-    return canvas, h
+    return canvas, display_h * 800 / AR_WINDOW_WIDTH
+
+
+def draw_calibration_guide(frame, matrix, size, whites, blacks,
+                           detected_points):
+    """원본 카메라 화면 위에 캘리브레이션 결과를 투영해 그린다.
+
+    화면을 잘라 펴지 않으므로, 자동 갱신이 좌표를 옮기면 노란 사각형과
+    건반 격자가 카메라 화면 안에서 자홍 기준점 쪽으로 움직이는 게 보인다.
+    """
+    w, h = size
+    rects = list(whites) + list(blacks) + [(0, 0, w, h)]
+    corners = [
+        [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+        for x1, y1, x2, y2 in rects
+    ]
+    projected = np.round(
+        unwarp_points(corners, matrix)
+    ).astype(np.int32).reshape(-1, 4, 2)
+
+    white_count = len(whites)
+    cv2.polylines(frame, list(projected[:white_count]), True,
+                  COLOR_WHITE_KEY, 1, cv2.LINE_AA)
+    cv2.polylines(frame, list(projected[white_count:-1]), True,
+                  COLOR_BLACK_KEY, 1, cv2.LINE_AA)
+    cv2.polylines(frame, [projected[-1]], True, COLOR_CALIBRATION, 2,
+                  cv2.LINE_AA)
+
+    if detected_points is not None:
+        for x, y in np.round(detected_points).astype(np.int32):
+            cv2.circle(frame, (int(x), int(y)), 6, COLOR_DETECTED, -1,
+                       cv2.LINE_AA)
+
+
+def paste_overlay(frame, warped, layered, matrix):
+    """워프 공간에 그린 마커만 원본 카메라 화면으로 되돌려 붙인다.
+
+    워프 이미지를 통째로 되돌리면 건반 영역이 두 번 리샘플링돼 흐려지므로,
+    오버레이가 실제로 칠한 픽셀만 골라 옮긴다.
+    """
+    changed = cv2.absdiff(layered, warped).max(axis=2)
+
+    if not changed.any():
+        return frame
+
+    # 프레임 전체를 역워프하면 마커 몇 개에 1280x720 을 두 번 훑는다.
+    # 칠해진 부분을 감싸는 원본 좌표 사각형만 되돌린다.
+    x, y, w, h = cv2.boundingRect(changed)
+    corners = unwarp_points([(x, y), (x + w, y), (x + w, y + h), (x, y + h)],
+                            matrix)
+    frame_h, frame_w = frame.shape[:2]
+    x0, y0 = np.floor(corners.min(axis=0)).astype(int) - 1
+    x1, y1 = np.ceil(corners.max(axis=0)).astype(int) + 2
+    x0, y0 = max(x0, 0), max(y0, 0)
+    x1, y1 = min(x1, frame_w), min(y1, frame_h)
+
+    if x0 >= x1 or y0 >= y1:
+        return frame
+
+    # ROI 좌표 (u, v) → 원본 (u + x0, v + y0) → 워프 공간
+    roi_matrix = matrix @ np.array([[1, 0, x0], [0, 1, y0], [0, 0, 1]],
+                                   dtype=np.float64)
+    size = (x1 - x0, y1 - y0)
+    mask = unwarp(changed, roi_matrix, size, cv2.INTER_NEAREST) > 0
+    roi = frame[y0:y1, x0:x1]
+    roi[mask] = unwarp(layered, roi_matrix, size)[mask]
+
+    return frame
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -443,8 +534,11 @@ def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
 # ════════════════════════════════════════════════════════════════════
 
 def run_ar_loop(cap, calibration_points, view=None, manager=None,
-                free_notes=None, url=None, base_note=None):
-    """카메라 루프. view/manager 가 없으면 악보를 자유 재생한다."""
+                free_notes=None, url=None, base_note=None, settings=None):
+    """카메라 루프. view/manager 가 없으면 악보를 자유 재생한다.
+
+    settings 가 있으면 F 로 바꾼 카메라 방향을 저장한다.
+    """
     matrix = get_matrix(calibration_points)
     detector = create_aruco_detector()
 
@@ -453,7 +547,9 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
     update_count = 0
     auto_update_enabled = True
     playback_start_time = time.time()
-    window_initialized = False
+    window_shape = None
+    # True: 원본 카메라 화면 위에 캘리브레이션을 투영 / False: 건반만 잘라 편 화면
+    full_view = True
 
     while True:
         ret, frame = cap.read()
@@ -508,9 +604,15 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
                     status_color = COLOR_WARN
 
                     if stable_count >= STABLE_FRAME_COUNT:
-                        calibration_points = smooth_points(
+                        smoothed = smooth_points(
                             calibration_points,
                             candidate_points
+                        )
+                        # 마커가 반대편 모서리로 옮겨 간 경우(카메라를 뒤집어
+                        # 단 경우 등) 보간 도중 사각형이 꼬인다. 그땐 바로 붙인다.
+                        calibration_points = (
+                            smoothed if validate_points(smoothed)
+                            else candidate_points
                         )
                         matrix = get_matrix(calibration_points)
                         save_points(calibration_points)
@@ -548,47 +650,59 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
         h, w = warped.shape[:2]
         whites, blacks = build_keys(w, h)
 
-        for key in whites:
-            x1, y1, x2, y2 = key
-            cv2.rectangle(warped, (x1, y1), (x2, y2), (0, 255, 0), 1)
+        if full_view:
+            # 마커는 격자 없는 워프 화면에 그린 뒤 되돌려 붙이므로, 격자는
+            # 워프를 뜬 다음에 원본 화면에 직접 그린다.
+            draw_calibration_guide(frame, matrix, (w, h), whites, blacks,
+                                   detected_points)
+        else:
+            for key in whites:
+                x1, y1, x2, y2 = key
+                cv2.rectangle(warped, (x1, y1), (x2, y2), COLOR_WHITE_KEY, 1)
 
-        for key in blacks:
-            x1, y1, x2, y2 = key
-            cv2.rectangle(warped, (x1, y1), (x2, y2), (50, 50, 50), -1)
-            cv2.rectangle(warped, (x1, y1), (x2, y2), (0, 200, 255), 1)
+            for key in blacks:
+                x1, y1, x2, y2 = key
+                cv2.rectangle(warped, (x1, y1), (x2, y2), (50, 50, 50), -1)
+                cv2.rectangle(warped, (x1, y1), (x2, y2), COLOR_BLACK_KEY, 1)
 
         # ── 세션 연동 표시 / 자유 재생 ────────────────────────────
         if view is not None:
             state, progress = view.update()
             layered = draw_session_layer(warped, whites, blacks, view,
                                          state, progress, base_note)
-            output, hud_top = attach_hud_panel(layered)
-            draw_session_hud(output, hud_top, view, state, progress,
-                             manager.countdown_left, manager.result,
-                             manager.error, url)
         else:
             layered = render(warped, whites, blacks, notes=free_notes,
                              playback_time=time.time() - playback_start_time,
                              base_note=base_note)
-            output, hud_top = attach_hud_panel(layered)
+
+        scene = (paste_overlay(frame, warped, layered, matrix)
+                 if full_view else layered)
+        output, hud_top = attach_hud_panel(scene)
+
+        if view is not None:
+            draw_session_hud(output, hud_top, view, state, progress,
+                             manager.countdown_left, manager.result,
+                             manager.error, url)
+        else:
             draw_text(output, "Free score playback (no session)",
                       (15, hud_top + 26), COLOR_ACCENT, scale=0.6)
             draw_text(output, HELP_LINE, (15, hud_top + HUD_HEIGHT - 12),
                       COLOR_INFO, scale=0.45, thickness=1)
 
         # ArUco 상태는 HUD 우측에 — 건반 영역은 오버레이 전용으로 비운다.
-        draw_text_right(output, status_message, w - 15, hud_top + 26,
+        draw_text_right(output, status_message, 800 - 15, hud_top + 26,
                         status_color, scale=0.5)
 
-        if not window_initialized:
+        if output.shape[:2] != window_shape:
             # Keep rendering coordinates intact; enlarge only the display window.
+            # 보기 전환으로 세로 비율이 바뀌면 창 크기도 다시 맞춘다.
             cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
             output_height, output_width = output.shape[:2]
             cv2.resizeWindow(
                 WINDOW_NAME, AR_WINDOW_WIDTH,
                 round(AR_WINDOW_WIDTH * output_height / output_width),
             )
-            window_initialized = True
+            window_shape = output.shape[:2]
 
         cv2.imshow(WINDOW_NAME, output)
 
@@ -596,6 +710,28 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
 
         if key == 27:
             break
+
+        if key in (ord("v"), ord("V")):
+            full_view = not full_view
+            print("View:", "full camera" if full_view else "cropped keyboard")
+
+        if key in (ord("f"), ord("F")):
+            cap.rotate_180 = not cap.rotate_180
+            # 화면 좌표계가 통째로 돌아가므로 적용 중인 보정도 같이 돌린다.
+            # 그대로 두면 다음 프레임부터 엉뚱한 곳을 워프한다.
+            frame_h, frame_w = frame.shape[:2]
+            calibration_points = rotate_points_180(calibration_points,
+                                                   (frame_w, frame_h))
+            matrix = get_matrix(calibration_points)
+            save_points(calibration_points)
+            candidate_points = None
+            stable_count = 0
+
+            if settings is not None:
+                settings.set_camera_rotate_180(cap.rotate_180)
+                settings.save()
+
+            print("Camera rotation:", "180" if cap.rotate_180 else "0")
 
         if key in (ord("c"), ord("C")):
             if cap.switch():
@@ -1126,6 +1262,7 @@ def main():
             return
 
         cap = open_camera(args.camera)
+        cap.rotate_180 = settings.camera_rotate_180
         points = calibrate(cap, on_switch=cap.switch)
 
         if points is None or len(points) != 4:
@@ -1137,7 +1274,8 @@ def main():
             if url else "P 로 악보를 다시 재생합니다."))
 
         run_ar_loop(cap, points.copy(), view=view, manager=manager,
-                    free_notes=free_notes, url=url, base_note=base_note)
+                    free_notes=free_notes, url=url, base_note=base_note,
+                    settings=settings)
     except KeyboardInterrupt:
         print("\n종료합니다.")
     finally:

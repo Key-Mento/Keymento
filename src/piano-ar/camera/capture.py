@@ -7,9 +7,15 @@ class Camera:
     def __init__(self, cap, index):
         self._cap = cap
         self.index = index
+        # 연주자 맞은편(노트북 화면 등)에 단 카메라는 건반이 거꾸로 보인다.
+        # 여기서 돌려 두면 보정·검출·화면이 모두 같은 방향을 쓴다.
+        self.rotate_180 = False
 
     def read(self):
-        return self._cap.read()
+        ok, frame = self._cap.read()
+        if ok and self.rotate_180:
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
+        return ok, frame
 
     def release(self):
         self._cap.release()
@@ -25,6 +31,7 @@ class Camera:
         self._cap.release()
         self._cap = replacement._cap
         self.index = replacement.index
+        # rotate_180 은 그대로 둔다 — 방향은 카메라가 아니라 설치 위치의 문제다.
         print(f"카메라 전환 완료: {self.index}번. 새 카메라를 보정하세요.")
         return True
 
