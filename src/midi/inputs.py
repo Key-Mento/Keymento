@@ -7,9 +7,10 @@
 timestamp 는 '그 소스의 클럭'으로 찍은 타건 시각이다.
   - 로컬  : PC 의 time.time()
   - UDP   : 라즈베리파이가 패킷에 실어 보낸 타건 시각(Pi 클럭, 상대값)
-클럭 기준점이 서로 달라 절대 시각 비교는 불가능하지만, 판정이 쓰는 것은
-'직전 음과의 간격'이므로 같은 소스 안의 차이값은 유효하다. UDP 소스에서
-도착 시각 대신 이 값을 쓰면 Wi-Fi 지터가 판정 오차에 섞이지 않는다.
+클럭 기준점이 서로 달라 그대로는 PC 시계와 비교할 수 없으므로, 세션이
+두 클럭의 차를 추정해 PC 시계로 옮겨 쓴다(perform.session.SourceClock).
+UDP 소스에서 도착 시각 대신 이 값을 쓰면 Wi-Fi 지터가 판정 오차에 섞이지
+않는다.
 
 파일 구성:
   1. 공통 계약  : NoteEvent(정규화된 이벤트), MidiInputSource(인터페이스)
@@ -63,7 +64,7 @@ class NoteEvent:
     is_on: bool        # True = note on, False = note off
     note: int          # MIDI 노트 번호
     velocity: int
-    timestamp: float   # 소스 클럭 기준 타건 시각(초). 간격 계산에만 사용.
+    timestamp: float   # 소스 클럭 기준 타건 시각(초). PC 시계와 기준점이 다를 수 있다.
 
 
 class MidiInputSource:
@@ -152,9 +153,9 @@ class DemoInput(MidiInputSource):
         retry_after_wrong:
                      틀린 뒤에 정답을 이어서 칠지. 연습 모드에서는 True 여야
                      한다(맞출 때까지 대기하므로 안 치면 영원히 멈춘다).
-                     일반 모드에서는 반드시 False — 틀려도 세션이 정답 음을
-                     소진하고 넘어가므로, 정답을 또 치면 그게 '다음 음'
-                     자리를 먹어 이후 전부 한 칸씩 밀린다.
+                     일반 모드에서는 어느 쪽이든 된다 — 판정이 시각
+                     기준이라 오타가 음을 소진하지 않는다. False 면 그 음이
+                     Miss 로, True 면 오타 뒤 제때 친 음으로 남는다.
     """
 
     name = "demo"

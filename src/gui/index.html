@@ -345,6 +345,12 @@ function render(s) {
         div.textContent = GRADE_EMOJI[g] + " " + g + " " + s.result.timing[g];
         row.appendChild(div);
       }
+      if (s.result.wrong_attempts) {
+        const div = document.createElement("div");
+        div.className = "grade-Miss";
+        div.textContent = "✖ 오타 " + s.result.wrong_attempts + "회";
+        row.appendChild(div);
+      }
     }
     // 화음은 순서를 따지지 않고 한 박으로 세므로 박자 개수와 음 수가 다르다.
     if (s.result.chords) {
@@ -366,7 +372,7 @@ function render(s) {
     item.className = "feedItem";
     const pitch = ev.pitch_ok
       ? "✅ " + ev.played
-      : '❌ <span class="pitch-bad">' + ev.played + "</span> (정답: " + ev.expected + ")";
+      : '❌ <span class="pitch-bad">' + ev.played + "</span> (정답: " + (ev.expected || "-") + ")";
 
     // 연습 모드는 박자를 판정하지 않아 grade 가 null 로 온다.
     let mark;
@@ -374,6 +380,9 @@ function render(s) {
       const diff = (ev.diff_ms >= 0 ? "+" : "") + ev.diff_ms + "ms";
       mark = '<span class="grade-' + ev.grade + '">' +
         GRADE_EMOJI[ev.grade] + " " + ev.grade + " " + diff + "</span>";
+    } else if (ev.wrong) {
+      // 일반 모드의 오타 — 어떤 음도 소진하지 않고 판정 위치도 그대로다.
+      mark = '<span class="grade-Miss">✖ 오타</span>';
     } else if (ev.retry) {
       mark = '<span class="grade-Miss">🔁 다시</span>';
     } else if (ev.first_try) {
