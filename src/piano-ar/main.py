@@ -60,11 +60,11 @@ from calibration.calibrator import (                            # noqa: E402
     MOVEMENT_THRESHOLD,
     STABILITY_THRESHOLD,
     STABLE_FRAME_COUNT,
+    KeyArea,
+    MarkerTracker,
     calculate_average_movement,
     calculate_max_movement,
     calibrate,
-    create_aruco_detector,
-    detect_aruco_points,
     manual_calibrate,
     save_points,
     smooth_points,
@@ -209,6 +209,53 @@ def attach_hud_panel(scene):
     canvas[display_h:] = HUD_BG
 
     return canvas, display_h * 800 / AR_WINDOW_WIDTH
+
+
+def screen_work_area():
+    """작업 표시줄을 뺀 화면 영역 (left, top, width, height). 모르면 None.
+
+    DPI 를 모르는 프로세스라 Windows 배율(125% 등)이 걸린 좌표로 받는다.
+    cv2.resizeWindow 도 같은 좌표를 쓰므로 그대로 비교하면 된다.
+    """
+    if os.name != "nt":
+        return None
+
+    import ctypes
+    from ctypes import wintypes
+
+    rect = wintypes.RECT()
+    spi_getworkarea = 0x0030
+
+    if not ctypes.windll.user32.SystemParametersInfoW(
+            spi_getworkarea, 0, ctypes.byref(rect), 0):
+        return None
+
+    return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
+
+
+def fit_window_to_screen(width, height):
+    """창 전체가 화면에 들어오도록 비율을 지켜 줄인 이미지 영역 크기.
+
+    배율 125% 화면(1920x1080 → 1536x816)에서 1280x931 창을 그대로 열면
+    아래 HUD 가 작업 표시줄 밑으로 밀려난다. 제목 표시줄·테두리는
+    resizeWindow 가 이미지 크기 바깥에 덧붙이므로 그만큼 빼고 맞춘다.
+    """
+    area = screen_work_area()
+
+    if area is None:
+        return width, height
+
+    import ctypes
+
+    metrics = ctypes.windll.user32.GetSystemMetrics
+    # SM_CYCAPTION, SM_CYFRAME, SM_CXPADDEDBORDER
+    border = 2 * (metrics(33) + metrics(92))
+    frame_w, frame_h = border, metrics(4) + border
+    scale = min(1.0,
+                (area[2] - frame_w) / width,
+                (area[3] - frame_h) / height)
+
+    return round(width * scale), round(height * scale)
 
 
 def draw_calibration_guide(frame, matrix, size, whites, blacks,
@@ -540,7 +587,8 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
     settings 가 있으면 F 로 바꾼 카메라 방향을 저장한다.
     """
     matrix = get_matrix(calibration_points)
-    detector = create_aruco_detector()
+    tracker = MarkerTracker()
+    key_area = KeyArea.load()
 
     candidate_points = None
     stable_count = 0
@@ -557,13 +605,23 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
         if not ret:
             break
 
-        detected_points = detect_aruco_points(frame, detector)
+        # 추적은 마커 좌표로, 보정 비교·적용은 건반 모서리 좌표로 한다.
+        markers = tracker.update(frame, key_area.to_markers(calibration_points))
+        detected_points = (None if markers is None
+                           else key_area.from_markers(markers))
         valid_aruco = (
             detected_points is not None
             and validate_points(detected_points)
         )
 
-        status_message = "ArUco not detected"
+        # 어느 마커가 안 잡히는지 보여야 그 마커를 고치러 갈 수 있다.
+        missing_ids = [marker_id for marker_id in range(4)
+                       if marker_id not in tracker.recent_ids]
+        status_message = (
+            "ArUco not detected" if len(missing_ids) == 4
+            else f"ArUco {4 - len(missing_ids)}/4 - missing ID "
+                 + ",".join(map(str, missing_ids))
+        )
         status_color = COLOR_BAD
 
         if valid_aruco:
@@ -654,7 +712,7 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
             # 마커는 격자 없는 워프 화면에 그린 뒤 되돌려 붙이므로, 격자는
             # 워프를 뜬 다음에 원본 화면에 직접 그린다.
             draw_calibration_guide(frame, matrix, (w, h), whites, blacks,
-                                   detected_points)
+                                   list(tracker.seen.values()) or None)
         else:
             for key in whites:
                 x1, y1, x2, y2 = key
@@ -689,6 +747,9 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
             draw_text(output, HELP_LINE, (15, hud_top + HUD_HEIGHT - 12),
                       COLOR_INFO, scale=0.45, thickness=1)
 
+        if valid_aruco and tracker.estimated_id is not None:
+            status_message += f" (ID {tracker.estimated_id} est.)"
+
         # ArUco 상태는 HUD 우측에 — 건반 영역은 오버레이 전용으로 비운다.
         draw_text_right(output, status_message, 800 - 15, hud_top + 26,
                         status_color, scale=0.5)
@@ -698,10 +759,14 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
             # 보기 전환으로 세로 비율이 바뀌면 창 크기도 다시 맞춘다.
             cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
             output_height, output_width = output.shape[:2]
-            cv2.resizeWindow(
-                WINDOW_NAME, AR_WINDOW_WIDTH,
+            cv2.resizeWindow(WINDOW_NAME, *fit_window_to_screen(
+                AR_WINDOW_WIDTH,
                 round(AR_WINDOW_WIDTH * output_height / output_width),
-            )
+            ))
+            if window_shape is None:
+                area = screen_work_area()
+                if area is not None:
+                    cv2.moveWindow(WINDOW_NAME, area[0], area[1])
             window_shape = output.shape[:2]
 
         cv2.imshow(WINDOW_NAME, output)
@@ -724,6 +789,7 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
                                                    (frame_w, frame_h))
             matrix = get_matrix(calibration_points)
             save_points(calibration_points)
+            tracker.reset()
             candidate_points = None
             stable_count = 0
 
@@ -742,6 +808,7 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
                     break
                 calibration_points = points.copy()
                 matrix = get_matrix(calibration_points)
+                tracker.reset()
                 candidate_points = None
                 stable_count = 0
                 update_count = 0
@@ -753,6 +820,8 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
             if manual_result is not None:
                 calibration_points = manual_result.copy()
                 matrix = get_matrix(calibration_points)
+                # 마커가 다 보였으면 manual_calibrate 가 새 건반 영역을 저장했다.
+                key_area = KeyArea.load()
                 candidate_points = None
                 stable_count = 0
                 update_count += 1

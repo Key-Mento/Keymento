@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import json
 import os
+import time
 
 
 # 현재 파이썬 파일이 있는 폴더
@@ -19,6 +20,21 @@ STABLE_FRAME_COUNT = 5
 STABILITY_THRESHOLD = 3.0
 SMOOTHING_ALPHA = 0.3
 MAX_MISSING_FRAMES = 30
+
+# 한 프레임에 네 개가 동시에 잡혀야만 하면, 마커마다 60% 확률로 잡혀도
+# 넷이 함께 잡히는 건 13%뿐이다. 그래서 마커별 마지막 위치를 잠깐 기억한다.
+MARKER_MEMORY_SECONDS = 0.5
+ARUCO_IDS = (0, 1, 2, 3)
+
+# 마커 중심은 건반 모서리가 아니다 — 마커는 건반 위·아래 패널에 붙으므로
+# 그대로 쓰면 격자가 옆으로 늘어나고 기울어진다. 수동 보정(M) 때 찍은
+# 건반 모서리를 "마커 사각형 = 단위 정사각형" 좌표로 기억해 두고, 그 뒤로는
+# 마커가 움직인 만큼 건반 모서리를 따라 옮긴다.
+KEY_AREA_FILE = os.path.join(
+    BASE_DIR,
+    "key_area.json"
+)
+UNIT_SQUARE = np.float32([[0, 0], [1, 0], [1, 1], [0, 1]])
 
 # OpenCV orders each marker's corners as top-left, top-right, bottom-right,
 # bottom-left. Keep this as None only when each marker center physically marks
@@ -98,6 +114,82 @@ def load_points():
         print(error)
 
         return None
+
+
+def _transform(points, matrix):
+    return cv2.perspectiveTransform(
+        np.asarray(points, dtype=np.float32).reshape(-1, 1, 2),
+        matrix
+    ).reshape(-1, 2)
+
+
+class KeyArea:
+    """마커 네 점(ID 0~3 → 단위 정사각형 모서리) 기준으로 본 건반 네 모서리.
+
+    기본값은 단위 정사각형 그대로 — 마커 중심이 곧 건반 모서리라는 예전
+    가정과 같다. 마커와 건반의 물리적 관계만 담으므로 카메라를 바꾸거나
+    화면을 돌려도(F) 다시 배울 필요가 없다.
+    """
+
+    def __init__(self, points=UNIT_SQUARE):
+        self.points = np.asarray(points, dtype=np.float32)
+
+    @classmethod
+    def load(cls):
+        if not os.path.exists(KEY_AREA_FILE):
+            return cls()
+
+        try:
+            with open(KEY_AREA_FILE, "r", encoding="utf-8") as file:
+                points = np.array(json.load(file), dtype=np.float32)
+        except (json.JSONDecodeError, OSError, ValueError) as error:
+            print("건반 영역 파일을 불러올 수 없습니다.")
+            print(error)
+            return cls()
+
+        if points.shape != (4, 2):
+            print("건반 영역 파일 형식이 올바르지 않습니다.")
+            return cls()
+
+        return cls(points)
+
+    @classmethod
+    def learn(cls, marker_points, key_points):
+        """지금 보이는 마커 기준으로 건반 모서리가 어디 있는지 배운다."""
+        matrix = cv2.getPerspectiveTransform(
+            np.asarray(marker_points, dtype=np.float32),
+            UNIT_SQUARE
+        )
+        return cls(_transform(key_points, matrix))
+
+    def save(self):
+        try:
+            with open(KEY_AREA_FILE, "w", encoding="utf-8") as file:
+                json.dump(
+                    np.round(self.points.astype(float), 5).tolist(),
+                    file,
+                    indent=4
+                )
+            print(f"건반 영역 저장 완료: {KEY_AREA_FILE}")
+        except OSError as error:
+            print("건반 영역 저장 실패")
+            print(error)
+
+    def from_markers(self, marker_points):
+        """마커 네 점 → 건반 네 모서리."""
+        matrix = cv2.getPerspectiveTransform(
+            UNIT_SQUARE,
+            np.asarray(marker_points, dtype=np.float32)
+        )
+        return _transform(self.points, matrix)
+
+    def to_markers(self, key_points):
+        """건반 네 모서리 → 그때 마커가 있었을 네 점 (from_markers 의 역)."""
+        matrix = cv2.getPerspectiveTransform(
+            self.points,
+            np.asarray(key_points, dtype=np.float32)
+        )
+        return _transform(UNIT_SQUARE, matrix)
 
 
 def order_points(points):
@@ -231,7 +323,7 @@ def manual_mouse_callback(
             )
 
 
-def draw_manual_points(frame):
+def draw_manual_points(frame, marker_count=None):
     """수동으로 선택한 좌표를 화면에 표시한다."""
     display = frame.copy()
 
@@ -287,6 +379,17 @@ def draw_manual_points(frame):
         2
     )
 
+    if marker_count is not None:
+        cv2.putText(
+            display,
+            f"ArUco {marker_count}/4 (all 4 = ArUco follows these corners)",
+            (20, 95),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0) if marker_count == 4 else (0, 165, 255),
+            2
+        )
+
     return display
 
 
@@ -313,6 +416,7 @@ def manual_calibrate(cap):
     print("R: 다시 선택, ESC: 취소")
 
     result = None
+    tracker = MarkerTracker()
 
     while True:
         ret, frame = cap.read()
@@ -321,7 +425,8 @@ def manual_calibrate(cap):
             print("카메라 프레임 읽기 실패")
             break
 
-        display = draw_manual_points(frame)
+        markers = tracker.update(frame)
+        display = draw_manual_points(frame, len(tracker.recent_ids))
 
         cv2.imshow(
             window_name,
@@ -352,6 +457,14 @@ def manual_calibrate(cap):
                 print("자동 정렬된 좌표:")
                 print(result)
 
+                if markers is not None and validate_points(markers):
+                    KeyArea.learn(markers, result).save()
+                    print("이제 ArUco 가 마커 대신 이 건반 모서리를 따라갑니다.")
+                else:
+                    print("ArUco 마커 4개가 다 보이지 않아 건반 영역은 "
+                          "그대로 둡니다. 자동 보정(A)이 이 좌표를 "
+                          "덮어쓸 수 있습니다.")
+
                 break
 
             print("선택한 네 점이 올바르지 않습니다.")
@@ -375,7 +488,8 @@ def calibrate(cap, reuse_saved=True, on_switch=None):
     if calibration_points is not None:
         return calibration_points
 
-    detector = create_aruco_detector()
+    tracker = MarkerTracker()
+    key_area = KeyArea.load()
     window_name = "Initial Calibration"
     cv2.namedWindow(window_name)
 
@@ -392,9 +506,10 @@ def calibrate(cap, reuse_saved=True, on_switch=None):
             print("Failed to read camera frame")
             break
 
-        detected_points = detect_aruco_points(
-            frame,
-            detector
+        markers = tracker.update(frame)
+        detected_points = (
+            None if markers is None
+            else key_area.from_markers(markers)
         )
 
         valid_aruco = (
@@ -414,7 +529,8 @@ def calibrate(cap, reuse_saved=True, on_switch=None):
             frame,
             detected_points,
             None,
-            "Show markers / M: manual" + (" / C: camera" if on_switch else ""),
+            f"Markers {len(tracker.recent_ids)}/4 / M: manual"
+            + (" / C: camera" if on_switch else ""),
             (0, 0, 255),
             0,
             True
@@ -454,6 +570,17 @@ def create_aruco_detector():
 
     parameters = cv2.aruco.DetectorParameters()
 
+    # 건반 위 마커는 작고 비스듬히 찍혀 한 칸이 3~5px 밖에 안 된다.
+    # 임계값 창 크기(3·10·17)를 작은 마커에 맞추고, 흐린 윤곽도 사각형으로
+    # 받아 준다. 창을 4 간격으로 더 촘촘히 하면 조금 더 잡히지만 검출
+    # 시간이 1.5배(720p 에서 23→34ms)라 30fps 를 못 지킨다.
+    parameters.adaptiveThreshWinSizeStep = 7
+    parameters.polygonalApproxAccuracyRate = 0.05
+    parameters.minMarkerPerimeterRate = 0.02
+    parameters.perspectiveRemovePixelPerCell = 8
+    # 모서리를 서브픽셀로 다듬어 기준점 떨림(→ 자동 보정 흔들림)을 줄인다.
+    parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+
     return cv2.aruco.ArucoDetector(
         aruco_dict,
         parameters
@@ -465,12 +592,111 @@ def detect_aruco_points(
     detector
 ):
     """현재 프레임에서 ID 0, 1, 2, 3의 중심점을 검출한다."""
+    marker_reference_points = detect_marker_points(
+        frame,
+        detector
+    )
+
+    if not all(
+        marker_id in marker_reference_points
+        for marker_id in ARUCO_IDS
+    ):
+        return None
+
+    # ID 0: 왼쪽 위
+    # ID 1: 오른쪽 위
+    # ID 2: 오른쪽 아래
+    # ID 3: 왼쪽 아래
+    return np.array(
+        [marker_reference_points[marker_id] for marker_id in ARUCO_IDS],
+        dtype=np.float32
+    )
+
+
+class MarkerTracker:
+    """프레임마다 일부 마커만 잡혀도 네 기준점을 이어 붙인다.
+
+    - 최근 MARKER_MEMORY_SECONDS 안에 본 마커는 마지막 위치를 쓴다.
+    - 그래도 하나가 비면(손이 가린 경우 등) 나머지 셋의 이동으로
+      기준 좌표의 네 번째 점을 옮겨 채운다.
+    """
+
+    def __init__(self, detector=None):
+        self.detector = detector or create_aruco_detector()
+        # 이번 프레임에서 실제로 찾은 ID → 기준점 (화면 표시용)
+        self.seen = {}
+        # 최근에 본 ID 목록 (상태 표시용)
+        self.recent_ids = []
+        # 세 점으로 추정해 채운 ID, 없으면 None
+        self.estimated_id = None
+        self._last = {}
+
+    def reset(self):
+        """좌표계가 바뀌면(회전·카메라 전환) 기억한 위치를 버린다."""
+        self._last.clear()
+        self.seen = {}
+        self.recent_ids = []
+        self.estimated_id = None
+
+    def update(self, frame, reference_points=None):
+        """ID 0~3 순서의 네 점, 채울 수 없으면 None."""
+        now = time.monotonic()
+        self.seen = detect_marker_points(frame, self.detector)
+
+        for marker_id, point in self.seen.items():
+            self._last[marker_id] = (point, now)
+
+        recent = {
+            marker_id: point
+            for marker_id, (point, seen_at) in self._last.items()
+            if now - seen_at <= MARKER_MEMORY_SECONDS
+        }
+        self.recent_ids = sorted(recent)
+        self.estimated_id = None
+
+        missing = [
+            marker_id for marker_id in ARUCO_IDS
+            if marker_id not in recent
+        ]
+
+        if len(missing) == 1 and reference_points is not None:
+            known = [
+                marker_id for marker_id in ARUCO_IDS
+                if marker_id in recent
+            ]
+            reference = np.asarray(reference_points, dtype=np.float32)
+            affine = cv2.getAffineTransform(
+                reference[known],
+                np.array([recent[marker_id] for marker_id in known],
+                         dtype=np.float32)
+            )
+            recent[missing[0]] = cv2.transform(
+                reference[missing].reshape(1, 1, 2),
+                affine
+            ).reshape(2)
+            self.estimated_id = missing[0]
+            missing = []
+
+        if missing:
+            return None
+
+        return np.array(
+            [recent[marker_id] for marker_id in ARUCO_IDS],
+            dtype=np.float32
+        )
+
+
+def detect_marker_points(
+    frame,
+    detector
+):
+    """현재 프레임에서 찾은 ID 0~3 마커의 기준점을 {ID: 점} 으로 준다."""
     corners, ids, _ = detector.detectMarkers(
         frame
     )
 
     if ids is None:
-        return None
+        return {}
 
     marker_reference_points = {}
 
@@ -481,7 +707,7 @@ def detect_aruco_points(
         marker_points = marker_corner[0]
         marker_id = int(marker_id)
 
-        if marker_id not in (0, 1, 2, 3):
+        if marker_id not in ARUCO_IDS:
             continue
 
         if ARUCO_KEYBOARD_CORNER_INDICES is None:
@@ -501,29 +727,7 @@ def detect_aruco_points(
 
         marker_reference_points[marker_id] = reference_point
 
-    required_ids = [0, 1, 2, 3]
-
-    if not all(
-        marker_id in marker_reference_points
-        for marker_id in required_ids
-    ):
-        return None
-
-    # ID 0: 왼쪽 위
-    # ID 1: 오른쪽 위
-    # ID 2: 오른쪽 아래
-    # ID 3: 왼쪽 아래
-    points = np.array(
-        [
-            marker_reference_points[0],
-            marker_reference_points[1],
-            marker_reference_points[2],
-            marker_reference_points[3]
-        ],
-        dtype=np.float32
-    )
-
-    return points
+    return marker_reference_points
 
 
 def calculate_average_movement(
