@@ -383,8 +383,14 @@ function render(s) {
     } else if (ev.wrong) {
       // 일반 모드의 오타 — 어떤 음도 소진하지 않고 판정 위치도 그대로다.
       mark = '<span class="grade-Miss">✖ 오타</span>';
+    } else if (ev.missing_notes && ev.missing_notes.length) {
+      // 연습 모드 — 화음을 한꺼번에 다 치지 못해 처음부터 다시 친다.
+      mark = '<span class="grade-Miss">🔁 화음 미완성</span>';
     } else if (ev.retry) {
       mark = '<span class="grade-Miss">🔁 다시</span>';
+    } else if (ev.chord_progress) {
+      mark = '<span class="grade-Good">⏳ 화음 ' +
+        ev.chord_progress[0] + "/" + ev.chord_progress[1] + "</span>";
     } else if (ev.first_try) {
       mark = '<span class="grade-Perfect">✅ 한 번에</span>';
     } else {

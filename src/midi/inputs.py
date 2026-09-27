@@ -139,6 +139,11 @@ class LocalMidiInput(MidiInputSource):
         self._midi_in.delete()
 
 
+# 이 시간(초) 안에 시작하는 음들을 한 화음으로 본다. 판정 쪽
+# (piano-score/judgement.py 의 CHORD_TOLERANCE)과 같은 값이다.
+CHORD_TOLERANCE = 0.02
+
+
 class DemoInput(MidiInputSource):
     """정답지를 스스로 연주하는 가짜 소스 — 건반 없이 흐름만 볼 때 쓴다.
 
@@ -153,6 +158,8 @@ class DemoInput(MidiInputSource):
         retry_after_wrong:
                      틀린 뒤에 정답을 이어서 칠지. 연습 모드에서는 True 여야
                      한다(맞출 때까지 대기하므로 안 치면 영원히 멈춘다).
+                     화음 중간에 틀렸으면 화음의 첫 음부터 다시 친다 —
+                     연습 모드는 화음을 한꺼번에 쳐야 통과한다.
                      일반 모드에서는 어느 쪽이든 된다 — 판정이 시각
                      기준이라 오타가 음을 소진하지 않는다. False 면 그 음이
                      Miss 로, True 면 오타 뒤 제때 친 음으로 남는다.
@@ -168,7 +175,7 @@ class DemoInput(MidiInputSource):
         self._retry_after_wrong = retry_after_wrong
         self._index = 0
         self._pending_off = None       # (발송 시각, note)
-        self._retry_note = None        # 틀린 음 뒤에 이어서 칠 정답
+        self._wronged = set()          # 이미 일부러 틀려 본 음의 순번
         self._started_at = None        # 첫 poll 때 잡는다
 
     def _now(self):
@@ -191,13 +198,6 @@ class DemoInput(MidiInputSource):
         if self._pending_off is not None:
             return None
 
-        # 일부러 틀린 뒤에는 곧바로 정답을 쳐서 진행이 막히지 않게 한다.
-        if self._retry_note is not None:
-            note = self._retry_note
-            self._retry_note = None
-            self._pending_off = (now + 0.05, note)
-            return NoteEvent(True, note, 100, now)
-
         if self._index >= len(self._notes):
             return None
 
@@ -210,16 +210,28 @@ class DemoInput(MidiInputSource):
         note = entry["note"]
 
         if (self._wrong_every
-                and self._index % self._wrong_every == 0):
-            # 반음 아래를 친다. 연습 모드에서만 이어서 정답을 고쳐 친다.
+                and self._index % self._wrong_every == 0
+                and self._index not in self._wronged):
+            # 반음 아래를 친다. 연습 모드에서만 이어서 정답을 고쳐 친다 —
+            # 순번을 화음의 첫 음으로 되감으면(이미 지난 시각이라) 곧바로
+            # 화음 전체를 다시 친다.
+            self._wronged.add(self._index)
             wrong = note - 1 if note > 0 else note + 1
             if self._retry_after_wrong:
-                self._retry_note = note
+                self._index = self._chord_start(self._index - 1)
             self._pending_off = (now + 0.05, wrong)
             return NoteEvent(True, wrong, 100, now)
 
         self._pending_off = (now + 0.05, note)
         return NoteEvent(True, note, 100, now)
+
+    def _chord_start(self, index):
+        """index 번째 음이 속한 화음(같은 시각 음들)의 첫 순번."""
+        time_at = self._notes[index]["time"]
+        while (index > 0
+               and time_at - self._notes[index - 1]["time"] <= CHORD_TOLERANCE):
+            index -= 1
+        return index
 
     def close(self):
         pass

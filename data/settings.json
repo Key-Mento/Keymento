@@ -2,7 +2,7 @@
   "selected_song": "abc-song-in-c",
   "speed": 1.0,
   "input_source": "local",
-  "practice_mode": true,
+  "practice_mode": false,
   "base_note": 48,
   "camera_rotate_180": true
 }

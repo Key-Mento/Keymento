@@ -25,6 +25,7 @@ import json
 import os
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -42,7 +43,7 @@ _INDEX_PATH = Path(__file__).resolve().parent / "index.html"
 # 키가 빠지는 일이 없도록 한 곳에서 모양을 정해 둔다.
 _EMPTY_PROGRESS = {
     "index": 0, "total": 0, "next": None, "next_notes": [],
-    "last_note": None, "last_ok": None, "retries": 0,
+    "last_note": None, "last_ok": None, "retries": 0, "last_missing": [],
 }
 
 
@@ -75,6 +76,10 @@ class SessionManager:
         self.state = "idle"   # idle|countdown|playing|done|aborted|error
         self.countdown_left = 0
         self.progress = dict(_EMPTY_PROGRESS)
+        # 일반 모드에서 이미 친 음 {(덩어리 번호, MIDI 음): (등급, 반영 시각)}.
+        # AR 이 친 음의 마커를 지우고 등급 색으로 잠깐 번쩍인다. progress
+        # 처럼 통째로 새 dict 로 바꿔 끼워 AR 쪽이 락 없이 읽는다.
+        self.hits = {}
         self.result = None
         self.error = None
         # 세션이 시작된 시점의 모드. 진행 중에 설정이 바뀌어도 화면 표시가
@@ -120,6 +125,7 @@ class SessionManager:
             self.state = "countdown"
             self.countdown_left = self.countdown
             self.progress = dict(_EMPTY_PROGRESS)
+            self.hits = {}
             self.result = None
             self.error = None
             self.active_practice = self.settings.practice_mode
@@ -171,7 +177,13 @@ class SessionManager:
                     "last_note": event.get("played_note"),
                     "last_ok": event.get("pitch_ok"),
                     "retries": retries,
+                    # 연습 모드에서 화음을 덜 쳐 실패했을 때 빠진 음
+                    "last_missing": list(event.get("missing_notes") or []),
                 }
+                if event.get("pitch_ok") and event.get("group") is not None:
+                    key = (event["group"], event["played_note"])
+                    self.hits = {**self.hits,
+                                 key: (event.get("grade"), time.time())}
             elif kind == "done":
                 self.state = "done"
                 self.result = event["result"]

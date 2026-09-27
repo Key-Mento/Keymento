@@ -463,6 +463,16 @@ class SessionView:
         return elapsed * self._manager.effective_speed
 
     @property
+    def speed(self):
+        """악보 시각 → 실제 시각 배율. 판정 창(초)은 실제 시각 기준이다."""
+        return self._manager.effective_speed
+
+    @property
+    def hits(self):
+        """일반 모드에서 이미 친 음 {(덩어리 번호, MIDI 음): (등급, 시각)}."""
+        return self._manager.hits
+
+    @property
     def since_progress(self):
         return time.time() - self._progress_at
 
@@ -485,12 +495,14 @@ def draw_session_layer(warped, whites, blacks, view, state, progress,
                       active_notes=list(progress.get("next_notes") or []),
                       base_note=base_note)
 
-    # 일반 모드: 악보를 시간축대로 흘려보낸다. 목표를 미리 짚어 주면
-    # 언제 치는지가 점수인 의미가 없어지므로 표시하지 않는다.
+    # 일반 모드: 악보를 시간축대로 흘려보낸다. 음마다 목표 시각 조금 전에
+    # 떠서 판정 창에 맞춰 색이 바뀌고(초록 = Perfect), 친 음은 지운다.
     return render(warped, whites, blacks,
                   notes=view.score_notes,
                   playback_time=view.playback_time,
-                  base_note=base_note)
+                  base_note=base_note,
+                  speed=view.speed,
+                  hits=view.hits)
 
 
 def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
@@ -537,7 +549,13 @@ def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
         # 방금 틀린 음을 잠깐 알려 준다.
         if progress.get("last_ok") is False and view.since_progress < 1.2:
             missed = progress.get("last_note")
-            played = "MISSED" if missed is None else f"X {note_to_ascii(missed)}"
+            if progress.get("last_missing"):
+                # 연습 모드에서 화음을 덜 친 경우 — 빠진 음을 짚어 준다.
+                played = f"Chord: missing {ascii_names(progress['last_missing'])}"
+            elif missed is None:
+                played = "MISSED"
+            else:
+                played = f"X {note_to_ascii(missed)}"
             draw_text(canvas, f"{played}  ->  press {ascii_names(targets)}",
                       (15, hud_top + 88), COLOR_BAD, scale=0.6)
 
