@@ -1,4 +1,5 @@
 import cv2
+import sys
 
 
 class Camera:
@@ -45,7 +46,10 @@ def open_camera(index=None):
     candidates = (1, 0) if index is None else (index,)
 
     for candidate in candidates:
-        cap = cv2.VideoCapture(candidate)
+        # On macOS, select the native AVFoundation backend explicitly.
+        # This avoids backend-dependent index mappings when choosing USB webcams.
+        backend = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
+        cap = cv2.VideoCapture(candidate, backend)
         selected = False
         try:
             if not cap.isOpened():
