@@ -115,11 +115,11 @@ select:focus{border-color:var(--accent)}
   <div class="keyboardWrap"><div class="keyboardMeta"><span>32-KEY GUIDE</span><span id="keyboardHint">다음 건반이 강조됩니다</span></div><div id="keyboard" class="keyboard"></div></div>
 </div>
 <script>
-const INPUT_LABELS={local:"Local MIDI",udp:"Raspberry Pi"};
-const STATE_LABELS={idle:"대기 중",countdown:"카운트다운",playing:"연주 중",done:"완주",aborted:"중단됨",error:"오류"};
-const GRADE_EMOJI={Perfect:"●",Great:"●",Good:"●",Miss:"●"};
+const INPUT_LABELS={local:"로컬 MIDI",udp:"라즈베리파이 (UDP)"};
+const STATE_LABELS={idle:"대기 중",countdown:"카운트다운",playing:"연주 중",done:"완주!",aborted:"중단됨",error:"오류"};
+const GRADE_EMOJI = { Perfect: "✨", Great: "👍", Good: "👌", Miss: "☁️" };
 const $=id=>document.getElementById(id);
-let lastSeq=0,running=false,lastPlayedMidi=null;
+let lastSeq=0,running=false;
 
 function midiName(n){const names=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];return names[n%12]+(Math.floor(n/12)-1)}
 function buildKeyboard(){
@@ -133,7 +133,7 @@ function buildKeyboard(){
   }
 }
 function updateKeyboard(targets=[]){
-  document.querySelectorAll(".key").forEach(k=>{k.classList.remove("target","hit");const n=Number(k.dataset.midi);if(targets.includes(n))k.classList.add("target");if(n===lastPlayedMidi)k.classList.add("hit")})
+  document.querySelectorAll(".key").forEach(k=>{k.classList.remove("target","hit");const n=Number(k.dataset.midi);if(targets.includes(n))k.classList.add("target");})
 }
 async function postJSON(url,body){
   const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
@@ -155,8 +155,8 @@ function render(s){
   $("speedNote").textContent=Math.abs(s.speed_scale-1)<1e-9?"":`AR 배율 ${s.speed_scale}x · 실제 ${s.effective_speed.toFixed(2)}x`;
 
   const inputRow=$("inputRow");inputRow.innerHTML="";for(const src of s.input_sources){const b=document.createElement("button");b.textContent=INPUT_LABELS[src]||src;b.disabled=running;if(src===s.input)b.className="active";b.onclick=()=>postJSON("/api/input",{source:src});inputRow.appendChild(b)}
-  const modeRow=$("modeRow");modeRow.innerHTML="";for(const [practice,label] of [[false,"Normal"],[true,"Practice"]]){const b=document.createElement("button");b.textContent=label;b.disabled=running;if(practice===s.practice)b.className="active";b.onclick=()=>postJSON("/api/mode",{practice});modeRow.appendChild(b)}
-  $("modeDesc").textContent=s.practice?"Practice · 정답 건반을 칠 때까지 대기합니다. 박자 판정 없이 음정 중심으로 연습합니다.":"Normal · 악보 시간에 맞춰 진행하며 음정과 박자를 함께 판정합니다.";
+  const modeRow=$("modeRow");modeRow.innerHTML="";for(const [practice,label] of [[false,"일반"],[true,"연습"]]){const b=document.createElement("button");b.textContent=label;b.disabled=running;if(practice===s.practice)b.className="active";b.onclick=()=>postJSON("/api/mode",{practice});modeRow.appendChild(b)}
+  $("modeDesc").textContent=s.practice?"정답 건반을 칠 때까지 다음 음으로 넘어가지 않습니다. 기다리는 시간이 섞이므로 박자는 판정하지 않고, 점수는 음정만으로 냅니다.":"악보 시계대로 진행합니다. 시간 안에 못 치면 Miss 로 넘어가고, 음정과 박자를 함께 판정합니다.";
 
   const mainBtn=$("mainBtn");mainBtn.textContent=running?"■":"▶";mainBtn.className=running?"stop":"";mainBtn.title=running?"연주 중지":"연주 시작";mainBtn.disabled=!running&&!s.songs.length;
 
@@ -166,20 +166,55 @@ function render(s){
   if(s.state==="playing"){
     const p=s.progress||{};$("nextNoteName").textContent=p.next||"🎉";$("noteBeam").classList.toggle("chord",String(p.next||"").length>8);
     $("barFill").style.width=p.total?(100*p.index/p.total)+"%":"0%";$("progressText").textContent=(p.index||0)+" / "+(p.total||0);
-    const hit=$("lastHit");if(p.last_note===null||p.last_ok===null){hit.textContent="";hit.className=""}else if(p.last_ok){hit.textContent=s.practice&&p.retries?"✓ 통과":"✓ 정답";hit.className="ok"}else{hit.textContent="× 다시 · "+(p.next||"");hit.className="bad"}
+    const hit=$("lastHit");if(p.last_note===null||p.last_ok===null){hit.textContent="";hit.className=""}else if(p.last_ok){hit.textContent="✅ "+(s.practice&&p.retries?"통과":"정답");hit.className="ok"}else{hit.textContent="❌ 다시 — "+(p.next||"");hit.className="bad"}
     const targets=Array.isArray(p.next_notes)?p.next_notes:[];updateKeyboard(targets)
   }else updateKeyboard([]);
 
   if(s.state==="error"&&s.error)$("hint").textContent=s.error;
   const result=$("resultCard");
-  if(s.result){result.style.display="flex";const practice=s.result.mode==="practice";$("overallScore").innerHTML=s.result.overall+"<small> / 100</small>";$("pitchAcc").textContent=s.result.pitch_accuracy+"%";$("pitchAccLabel").textContent=practice?"한 번에 맞춘 비율":"음정 정확도";$("timingAcc").textContent=practice?"-":s.result.timing_accuracy+"%";$("timingAccLabel").textContent=practice?"박자 판정 없음":"박자 정확도";const row=$("gradeRow");row.innerHTML="";
-    if(practice){const d=document.createElement("div");d.className="grade-Good";d.textContent="↻ 오타 "+s.result.wrong_attempts+"회";row.appendChild(d)}else{for(const g of ["Perfect","Great","Good","Miss"]){const d=document.createElement("div");d.className="grade-"+g;d.textContent=GRADE_EMOJI[g]+" "+g+" "+s.result.timing[g];row.appendChild(d)}if(s.result.wrong_attempts){const d=document.createElement("div");d.className="grade-Miss";d.textContent="× 오타 "+s.result.wrong_attempts+"회";row.appendChild(d)}}if(s.result.chords){const d=document.createElement("div");d.className="grade-Good";d.textContent="♬ 화음 "+s.result.chords+"곳";row.appendChild(d)}
+  if(s.result){result.style.display="flex";const practice=s.result.mode==="practice";$("overallScore").innerHTML=s.result.overall+"<small> / 100점</small>";$("pitchAcc").textContent=s.result.pitch_accuracy+"%";$("pitchAccLabel").textContent=practice?"한 번에 맞춘 비율":"음정 정확도";$("timingAcc").textContent=practice?"-":s.result.timing_accuracy+"%";$("timingAccLabel").textContent=practice?"박자 판정 없음":"박자 정확도";const row=$("gradeRow");row.innerHTML="";
+    if(practice){const d=document.createElement("div");d.className="grade-Good";d.textContent="🔁 총 오타 "+s.result.wrong_attempts+"회";row.appendChild(d)}else{for(const g of ["Perfect","Great","Good","Miss"]){const d=document.createElement("div");d.className="grade-"+g;d.textContent=GRADE_EMOJI[g]+" "+g+" "+s.result.timing[g];row.appendChild(d)}if(s.result.wrong_attempts){const d=document.createElement("div");d.className="grade-Miss";d.textContent="✖ 오타 "+s.result.wrong_attempts+"회";row.appendChild(d)}}if(s.result.chords){const d=document.createElement("div");d.className="grade-Good";d.textContent="🎹 화음 "+s.result.chords+"곳";row.appendChild(d)}
   }else result.style.display="none";
 
-  for(const [seq,ev] of s.events){lastSeq=Math.max(lastSeq,seq);if(ev.type==="start")$("feed").innerHTML="";if(ev.type!=="note")continue;if(typeof ev.played==="string"){const m=ev.played.match(/-?\d+/);if(m)lastPlayedMidi=Number(m[0])}
-    const item=document.createElement("div");item.className="feedItem";const pitch=ev.pitch_ok?"✓ "+ev.played:'× <span class="pitch-bad">'+ev.played+"</span> · "+(ev.expected||"-");let mark;
-    if(ev.grade){const diff=(ev.diff_ms>=0?"+":"")+ev.diff_ms+"ms";mark='<span class="grade-'+ev.grade+'">'+ev.grade+" "+diff+"</span>"}else if(ev.wrong)mark='<span class="grade-Miss">오타</span>';else if(ev.missing_notes&&ev.missing_notes.length)mark='<span class="grade-Miss">화음 미완성</span>';else if(ev.retry)mark='<span class="grade-Miss">다시</span>';else if(ev.chord_progress)mark='<span class="grade-Good">화음 '+ev.chord_progress[0]+"/"+ev.chord_progress[1]+"</span>";else if(ev.first_try)mark='<span class="grade-Perfect">한 번에</span>';else mark='<span class="grade-Good">통과</span>';
-    item.innerHTML='<span class="idx">'+ev.index+"/"+ev.total+"</span><span>"+pitch+"</span>"+mark;$("feed").prepend(item);while($("feed").children.length>40)$("feed").lastChild.remove()
+  // 세션 이벤트 → 판정 피드
+  for (const [seq, ev] of s.events) {
+    lastSeq = Math.max(lastSeq, seq);
+    if (ev.type === "start") $("feed").innerHTML = "";
+    if (ev.type !== "note") continue;
+    const item = document.createElement("div");
+    item.className = "feedItem";
+    const pitch = ev.pitch_ok
+      ? "✅ " + ev.played
+      : '❌ <span class="pitch-bad">' + ev.played + "</span> (정답: " + (ev.expected || "-") + ")";
+
+    // 연습 모드는 박자를 판정하지 않아 grade 가 null 로 온다.
+    let mark;
+    if (ev.grade) {
+      const diff = (ev.diff_ms >= 0 ? "+" : "") + ev.diff_ms + "ms";
+      mark = '<span class="grade-' + ev.grade + '">' +
+        GRADE_EMOJI[ev.grade] + " " + ev.grade + " " + diff + "</span>";
+    } else if (ev.wrong) {
+      // 일반 모드의 오타 — 어떤 음도 소진하지 않고 판정 위치도 그대로다.
+      mark = '<span class="grade-Miss">✖ 오타</span>';
+    } else if (ev.missing_notes && ev.missing_notes.length) {
+      // 연습 모드 — 화음을 한꺼번에 다 치지 못해 처음부터 다시 친다.
+      mark = '<span class="grade-Miss">🔁 화음 미완성</span>';
+    } else if (ev.retry) {
+      mark = '<span class="grade-Miss">🔁 다시</span>';
+    } else if (ev.chord_progress) {
+      mark = '<span class="grade-Good">⏳ 화음 ' +
+        ev.chord_progress[0] + "/" + ev.chord_progress[1] + "</span>";
+    } else if (ev.first_try) {
+      mark = '<span class="grade-Perfect">✅ 한 번에</span>';
+    } else {
+      mark = '<span class="grade-Good">☑️ 통과</span>';
+    }
+
+    item.innerHTML =
+      '<span class="idx">' + ev.index + "/" + ev.total + "</span>" +
+      "<span>" + pitch + "</span>" + mark;
+    $("feed").prepend(item);
+    while ($("feed").children.length > 30) $("feed").lastChild.remove();
   }
 }
 async function poll(){try{const res=await fetch("/api/state?since="+lastSeq);if(res.ok)render(await res.json())}catch(e){}}
