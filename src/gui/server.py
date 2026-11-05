@@ -66,6 +66,13 @@ class SessionManager:
         # 수 있을 만큼 느려야 해서 1 보다 작은 값을 쓴다(piano-ar/main.py).
         self.speed_scale = speed_scale
 
+        # Latest rendered AR frame for the browser's MJPEG viewer.
+        # This is presentation-only; the judgement/MIDI pipeline is unchanged.
+        self._video_cond = threading.Condition()
+        self._video_frame = None
+        self._video_serial = 0
+        self.video_enabled = False
+
         self._lock = threading.Lock()
         self._thread = None
         self._stop = threading.Event()
@@ -85,6 +92,19 @@ class SessionManager:
         # 세션이 시작된 시점의 모드. 진행 중에 설정이 바뀌어도 화면 표시가
         # 세션 동작과 어긋나지 않도록 start() 에서 한 번 고정한다.
         self.active_practice = None
+
+    def publish_video_frame(self, jpeg_bytes):
+        """Publish an already-rendered JPEG without changing any session state."""
+        with self._video_cond:
+            self._video_frame = jpeg_bytes
+            self._video_serial += 1
+            self._video_cond.notify_all()
+
+    def wait_for_video_frame(self, last_serial, timeout=2.0):
+        with self._video_cond:
+            if self._video_serial == last_serial:
+                self._video_cond.wait(timeout=timeout)
+            return self._video_serial, self._video_frame
 
     # ── 상태 조회 ─────────────────────────────────────────────────
     def running(self):
@@ -264,6 +284,7 @@ def _make_handler(manager: SessionManager):
                 "practice": settings.practice_mode,
                 "speed_scale": manager.speed_scale,
                 "effective_speed": manager.effective_speed,
+                "video_enabled": manager.video_enabled,
             }
             payload.update(manager.snapshot(since))
             return payload
@@ -273,6 +294,8 @@ def _make_handler(manager: SessionManager):
             path, _, query = self.path.partition("?")
             if path == "/":
                 self._serve_index()
+            elif path == "/video.mjpg":
+                self._stream_video()
             elif path == "/api/state":
                 since = 0
                 for part in query.split("&"):
@@ -284,6 +307,30 @@ def _make_handler(manager: SessionManager):
                 self._send_json(self._state_payload(since))
             else:
                 self.send_error(404)
+
+        def _stream_video(self):
+            if not manager.video_enabled:
+                self.send_error(404, "AR video is not active")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-store, no-cache")
+            self.end_headers()
+            serial = -1
+            try:
+                while manager.video_enabled:
+                    new_serial, frame = manager.wait_for_video_frame(serial)
+                    if frame is None or new_serial == serial:
+                        continue
+                    serial = new_serial
+                    self.wfile.write(b"--frame\\r\\n")
+                    self.wfile.write(b"Content-Type: image/jpeg\\r\\n")
+                    self.wfile.write(f"Content-Length: {len(frame)}\\r\\n\\r\\n".encode("ascii"))
+                    self.wfile.write(frame)
+                    self.wfile.write(b"\\r\\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass  # browser tab closed/reloaded
 
         def do_POST(self):
             if manager.running() and self.path in (
