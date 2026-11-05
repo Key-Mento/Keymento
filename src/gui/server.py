@@ -323,11 +323,11 @@ def _make_handler(manager: SessionManager):
                     if frame is None or new_serial == serial:
                         continue
                     serial = new_serial
-                    self.wfile.write(b"--frame\\r\\n")
-                    self.wfile.write(b"Content-Type: image/jpeg\\r\\n")
-                    self.wfile.write(f"Content-Length: {len(frame)}\\r\\n\\r\\n".encode("ascii"))
+                    self.wfile.write(b"--frame\r\n")
+                    self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                    self.wfile.write(f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii"))
                     self.wfile.write(frame)
-                    self.wfile.write(b"\\r\\n")
+                    self.wfile.write(b"\r\n")
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass  # browser tab closed/reloaded
