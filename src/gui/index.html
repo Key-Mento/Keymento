@@ -46,6 +46,18 @@ select:focus{border-color:var(--accent)}
 
 .workspace{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 290px;overflow:hidden}
 .stage{position:relative;min-width:0;overflow:hidden;background:linear-gradient(180deg,#2c323c 0%,#282c34 62%,#252931 100%)}
+.videoFrame{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#171a20;overflow:hidden}
+.videoFrame img{display:block;width:100%;height:100%;object-fit:contain}
+.videoFrame.active{display:flex}
+.stage.hasVideo:before{display:none}
+.stage.hasVideo .emptyState{display:none!important}
+.stage.hasVideo .playStage{background:transparent}
+.stage.hasVideo .noteBeam{left:auto;right:16px;bottom:10px;transform:none;min-width:120px;padding:9px 13px;border-radius:5px;background:rgba(30,33,39,.83)}
+.stage.hasVideo .noteBeam #nextNoteName{font-size:24px}
+.stage.hasVideo .noteBeam.chord #nextNoteName{font-size:20px}
+.stage.hasVideo .targetLine{display:none}
+.stage.hasVideo #lastHit{left:50%;top:7%;width:max-content;max-width:90%;transform:translateX(-50%);padding:5px 15px;background:rgba(30,33,39,.85);border-radius:6px;font-size:28px}
+.stage.hasVideo .progressBlock{width:calc(100% - 240px);margin-right:auto;background:rgba(30,33,39,.78);padding:8px;border-radius:5px}
 .stage:before{content:"";position:absolute;inset:0;background:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.02) 1px,transparent 1px);background-size:100% 52px,64px 100%;pointer-events:none}
 .emptyState,.countdown,.playStage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
 .emptyState{flex-direction:column;gap:10px;color:var(--muted);text-align:center;padding:30px}
@@ -99,7 +111,8 @@ select:focus{border-color:var(--accent)}
   </div>
 
   <div class="workspace">
-    <main class="stage">
+    <main class="stage" id="stage">
+      <div id="videoFrame" class="videoFrame"><img id="arVideo" alt="실시간 KEYMENTO AR 카메라 영상"></div>
       <div id="emptyState" class="emptyState"><div class="musicIcon">♬</div><b>곡을 선택하고 연주를 시작하세요</b><p>연주 중에는 다음 건반이 아래 피아노에서 강조되고, 중앙에서 즉시 판정을 확인할 수 있습니다.</p></div>
       <div id="countdownNum" class="countdown"></div>
       <div id="playStage" class="playStage">
@@ -119,7 +132,7 @@ const INPUT_LABELS={local:"로컬 MIDI",udp:"라즈베리파이 (UDP)"};
 const STATE_LABELS={idle:"대기 중",countdown:"카운트다운",playing:"연주 중",done:"완주!",aborted:"중단됨",error:"오류"};
 const GRADE_EMOJI = { Perfect: "✨", Great: "👍", Good: "👌", Miss: "☁️" };
 const $=id=>document.getElementById(id);
-let lastSeq=0,running=false;
+let lastSeq=0,running=false,lastGrade=null,videoStarted=false;
 
 function midiName(n){const names=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];return names[n%12]+(Math.floor(n/12)-1)}
 function buildKeyboard(){
@@ -143,6 +156,11 @@ async function postJSON(url,body){
 }
 function render(s){
   running=s.running;
+  const hasVideo=Boolean(s.video_enabled);
+  $("stage").classList.toggle("hasVideo",hasVideo);
+  $("videoFrame").classList.toggle("active",hasVideo);
+  if(hasVideo&&!videoStarted){$("arVideo").src="/video.mjpg";videoStarted=true}
+  if(!hasVideo&&videoStarted){$("arVideo").removeAttribute("src");videoStarted=false}
   const badge=$("stateBadge");badge.textContent=STATE_LABELS[s.state]||s.state;badge.className="stateBadge "+s.state;
   const selectedSong=s.songs.find(x=>x.id===s.selected);$("currentSongLabel").textContent=selectedSong?selectedSong.name:"곡을 선택하세요";
 
@@ -166,7 +184,17 @@ function render(s){
   if(s.state==="playing"){
     const p=s.progress||{};$("nextNoteName").textContent=p.next||"🎉";$("noteBeam").classList.toggle("chord",String(p.next||"").length>8);
     $("barFill").style.width=p.total?(100*p.index/p.total)+"%":"0%";$("progressText").textContent=(p.index||0)+" / "+(p.total||0);
-    const hit=$("lastHit");if(p.last_note===null||p.last_ok===null){hit.textContent="";hit.className=""}else if(p.last_ok){hit.textContent="✅ "+(s.practice&&p.retries?"통과":"정답");hit.className="ok"}else{hit.textContent="❌ 다시 — "+(p.next||"");hit.className="bad"}
+    // Large centre feedback is based only on the original timing grade event.
+    // Wrong-pitch retries remain in LIVE FEEDBACK without inventing a grade.
+    const hit=$("lastHit");
+    if(!s.practice&&lastGrade){
+      const signed=(lastGrade.diff_ms>=0?"+":"")+lastGrade.diff_ms+"ms";
+      hit.textContent=GRADE_EMOJI[lastGrade.grade]+" "+lastGrade.grade+" ("+signed+")";
+      hit.className=lastGrade.grade==="Miss"?"bad":"ok";
+    }else if(s.practice){
+      hit.textContent=p.last_note!==null&&p.last_ok?"✅ 통과":"";
+      hit.className=p.last_ok?"ok":"";
+    }else{hit.textContent="";hit.className=""}
     const targets=Array.isArray(p.next_notes)?p.next_notes:[];updateKeyboard(targets)
   }else updateKeyboard([]);
 
@@ -179,8 +207,14 @@ function render(s){
   // 세션 이벤트 → 판정 피드
   for (const [seq, ev] of s.events) {
     lastSeq = Math.max(lastSeq, seq);
-    if (ev.type === "start") $("feed").innerHTML = "";
+    if (ev.type === "start") {
+      $("feed").innerHTML = "";
+      lastGrade = null;
+    }
     if (ev.type !== "note") continue;
+    if (ev.grade && ["Perfect","Great","Good","Miss"].includes(ev.grade)) {
+      lastGrade={grade:ev.grade,diff_ms:ev.diff_ms};
+    }
     const item = document.createElement("div");
     item.className = "feedItem";
     const pitch = ev.pitch_ok
@@ -215,6 +249,13 @@ function render(s){
       "<span>" + pitch + "</span>" + mark;
     $("feed").prepend(item);
     while ($("feed").children.length > 30) $("feed").lastChild.remove();
+  }
+  // Apply the newest event immediately, not one polling interval later.
+  const hit=$("lastHit");
+  if(s.state==="playing"&&!s.practice&&lastGrade){
+    const signed=(lastGrade.diff_ms>=0?"+":"")+lastGrade.diff_ms+"ms";
+    hit.textContent=GRADE_EMOJI[lastGrade.grade]+" "+lastGrade.grade+" ("+signed+")";
+    hit.className=lastGrade.grade==="Miss"?"bad":"ok";
   }
 }
 async function poll(){try{const res=await fetch("/api/state?since="+lastSeq);if(res.ok)render(await res.json())}catch(e){}}
