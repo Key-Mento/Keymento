@@ -599,7 +599,8 @@ def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
 # ════════════════════════════════════════════════════════════════════
 
 def run_ar_loop(cap, calibration_points, view=None, manager=None,
-                free_notes=None, url=None, base_note=None, settings=None):
+                free_notes=None, url=None, base_note=None, settings=None,
+                web_video=False):
     """카메라 루프. view/manager 가 없으면 악보를 자유 재생한다.
 
     settings 가 있으면 F 로 바꾼 카메라 방향을 저장한다.
