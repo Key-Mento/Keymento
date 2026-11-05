@@ -89,6 +89,20 @@ from midi.inputs import (  # noqa: E402
 )
 from midi.sound import NotePlayer                      # noqa: E402
 
+# [실험용] 터미널 출력의 안내·실시간 피드백 on/off (main.py --no-hint/--no-feedback)
+SHOW_HINT = True
+SHOW_FEEDBACK = True
+
+
+def _hint_print(*args, **kwargs):
+    if SHOW_HINT:
+        print(*args, **kwargs)
+
+
+def _fb_print(*args, **kwargs):
+    if SHOW_FEEDBACK:
+        print(*args, **kwargs)
+
 
 def load_judgement_notes(song_path):
     """Return AR note events from the exact answer sheet used for judgement.
@@ -346,7 +360,7 @@ class TimedJudge:
         next_notes = self.next_notes()
 
         sign = f"+{diff_ms:.0f}" if diff_ms >= 0 else f"{diff_ms:.0f}"
-        print(f"[{self.done_notes}/{self.total_notes}] "
+        _fb_print(f"[{self.done_notes}/{self.total_notes}] "
               f"✅ [음정 O] {note_to_name(note)}  |  "
               f"{emoji} {grade:<7} ({sign}ms)")
         self._emit({
@@ -372,7 +386,7 @@ class TimedJudge:
                           else list(self._remaining[nearest]))
         next_notes = self.next_notes()
 
-        print(f"[{self.done_notes}/{self.total_notes}] "
+        _fb_print(f"[{self.done_notes}/{self.total_notes}] "
               f"❌ [오타] 입력:{note_to_name(note)} "
               f"정답:{_names(expected_notes) or '-'}")
         self._emit({
@@ -406,7 +420,7 @@ class TimedJudge:
         self._advance_head()
         next_notes = self.next_notes()
 
-        print(f"[{self.done_notes}/{self.total_notes}] "
+        _fb_print(f"[{self.done_notes}/{self.total_notes}] "
               f"MISSED {_names(missed_notes)} (no input, +{diff_ms:.0f}ms)")
         self._emit({
             "type": "note",
@@ -510,7 +524,7 @@ class PracticeJudge:
         remaining = self.next_notes()
 
         if remaining:
-            print(f"[{self.done_notes}/{self.total_notes}] "
+            _fb_print(f"[{self.done_notes}/{self.total_notes}] "
                   f"⏳ [화음 {len(self._pressed)}/{len(chord)}] "
                   f"{note_to_name(note)}  남은 음:{_names(remaining)}")
             self._emit({
@@ -539,10 +553,10 @@ class PracticeJudge:
         self._reset_attempt()
         next_notes = self.next_notes()
 
-        print(f"[{self.done_notes}/{self.total_notes}] "
+        _fb_print(f"[{self.done_notes}/{self.total_notes}] "
               f"{'✅' if first_try else '☑️'} [음정 O] {_names(chord)}")
         if next_notes:
-            print(f"👉 다음 목표: {_names(next_notes)}")
+            _hint_print(f"👉 다음 목표: {_names(next_notes)}")
         self._emit({
             "type": "note",
             "index": self.done_notes,
@@ -566,7 +580,7 @@ class PracticeJudge:
         self._fail_group()
         self._reset_attempt()
 
-        print(f"[{self.done_notes}/{self.total_notes}] "
+        _fb_print(f"[{self.done_notes}/{self.total_notes}] "
               f"🔁 [다시] 입력:{note_to_name(note)} 정답:{_names(chord)}")
         self._emit({
             "type": "note",
@@ -592,7 +606,7 @@ class PracticeJudge:
         self._fail_group()
         self._reset_attempt()
 
-        print(f"[{self.done_notes}/{self.total_notes}] "
+        _fb_print(f"[{self.done_notes}/{self.total_notes}] "
               f"🔁 [화음 미완성] 누른 음:{_names(pressed)} "
               f"빠진 음:{_names(missing)} — 화음을 한꺼번에 다시 치세요")
         self._emit({
@@ -688,7 +702,7 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
 
         first_notes = group_notes(0)
         print("\n🎹 [START] 연주 시작!")
-        print(f"👉 첫 번째 목표 건반: {_names(first_notes)}")
+        _hint_print(f"👉 첫 번째 목표 건반: {_names(first_notes)}")
         _emit(on_event, {"type": "start", "total": total_notes,
                          "next": _names(first_notes),
                          "next_notes": first_notes,

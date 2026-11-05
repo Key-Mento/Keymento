@@ -220,7 +220,8 @@ def _render_active(frame, whites, blacks, active_notes, base_note=None):
 
 
 def render(frame, whites, blacks, notes=None, playback_time=None,
-           active_notes=None, base_note=None, speed=1.0, hits=None):
+           active_notes=None, base_note=None, speed=1.0, hits=None,
+           show_hint=True, show_feedback=True):
     """Draw note markers over the warped keyboard view.
 
     active_notes overrides the score clock: the listed MIDI notes pulse until
@@ -237,6 +238,9 @@ def render(frame, whites, blacks, notes=None, playback_time=None,
     base_note is the MIDI number of the leftmost white key. None uses the
     module default; pass the configured value so the markers line up with
     whatever octave the physical keyboard is actually sending.
+
+    [실험용] show_hint=False 면 다가오는 음 마커를, show_feedback=False 면
+    친 음의 판정 색 플래시를 그리지 않는다.
     """
     global _start_time
 
@@ -275,7 +279,7 @@ def render(frame, whites, blacks, notes=None, playback_time=None,
         if hit is not None:
             grade, hit_at = hit
             since = now - hit_at
-            if since < HIT_FLASH_SECONDS:
+            if show_feedback and since < HIT_FLASH_SECONDS:
                 resolved = _resolve_key(note, whites, blacks, base_note)
                 if resolved is not None:
                     claimed.add(note)
@@ -298,6 +302,7 @@ def render(frame, whites, blacks, notes=None, playback_time=None,
             continue
 
         claimed.add(note)
-        _draw_timed_note(output, *resolved, dt, close)
+        if show_hint:
+            _draw_timed_note(output, *resolved, dt, close)
 
     return output

@@ -296,6 +296,8 @@ function render(s) {
     $("countdownNum").textContent = "";
     $("progressWrap").style.display = "block";
     const p = s.progress;
+    // [실험용] 안내 끄기: 다음 음 카드를 숨긴다.
+    $("nextNote").style.display = s.show_hint === false ? "none" : "";
     $("nextNoteName").textContent = p.next || "🎉";
     $("barFill").style.width = p.total ? (100 * p.index / p.total) + "%" : "0";
     $("progressText").textContent = p.index + " / " + p.total;
@@ -303,7 +305,7 @@ function render(s) {
     // 방금 친 음의 정오답. AR 창이 없을 때 유일한 즉시 피드백이라
     // 목표 바로 아래에 크게 띄운다.
     const hit = $("lastHit");
-    if (p.last_note === null || p.last_ok === null) {
+    if (s.show_feedback === false || p.last_note === null || p.last_ok === null) {
       hit.textContent = "";
       hit.className = "";
     } else if (p.last_ok) {
@@ -368,6 +370,7 @@ function render(s) {
     lastSeq = Math.max(lastSeq, seq);
     if (ev.type === "start") $("feed").innerHTML = "";
     if (ev.type !== "note") continue;
+    if (s.show_feedback === false) continue;  // [실험용] 실시간 피드백 끄기
     const item = document.createElement("div");
     item.className = "feedItem";
     const pitch = ev.pitch_ok

@@ -91,6 +91,7 @@ from midi.inputs import (                                       # noqa: E402
     midi_stuck_help,
     resolve_midi_port,
 )
+import perform.session as session_flags                      # noqa: E402
 from perform.session import load_judgement_notes                # noqa: E402
 from settings import Settings                                   # noqa: E402
 
@@ -390,9 +391,13 @@ class SessionView:
     찢어진 값이 나오지 않는다.
     """
 
-    def __init__(self, manager, settings):
+    def __init__(self, manager, settings, show_hint=True,
+                 show_feedback=True):
         self._manager = manager
         self._settings = settings
+        # [실험용] 안내(다음 음 표시)·피드백(색 변화, 틀림 메시지) 개별 끄기
+        self.show_hint = show_hint
+        self.show_feedback = show_feedback
         self._prev_state = None
         self._prev_progress = None
         self._progress_at = 0.0
@@ -489,6 +494,9 @@ def draw_session_layer(warped, whites, blacks, view, state, progress,
         return warped.copy()
 
     if view.practice:
+        if not view.show_hint:
+            return warped.copy()
+
         # 연습 모드는 악보 시계가 멈춰 있다 — 아직 안 친 목표 건반만
         # 계속 맥동시킨다. 화음은 남은 음만 빛난다.
         return render(warped, whites, blacks,
@@ -502,7 +510,9 @@ def draw_session_layer(warped, whites, blacks, view, state, progress,
                   playback_time=view.playback_time,
                   base_note=base_note,
                   speed=view.speed,
-                  hits=view.hits)
+                  hits=view.hits,
+                  show_hint=view.show_hint,
+                  show_feedback=view.show_feedback)
 
 
 def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
@@ -537,8 +547,9 @@ def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
                          scale=3.0)
 
     elif state == "playing":
-        draw_text(canvas, f"Next: {ascii_names(targets)}",
-                  (15, hud_top + 60), COLOR_OK, scale=0.95, thickness=3)
+        if view.show_hint:
+            draw_text(canvas, f"Next: {ascii_names(targets)}",
+                      (15, hud_top + 60), COLOR_OK, scale=0.95, thickness=3)
         draw_text(canvas, f"{index}/{total}", (330, hud_top + 60),
                   COLOR_INFO, scale=0.7)
 
@@ -547,7 +558,8 @@ def draw_session_hud(canvas, hud_top, view, state, progress, countdown,
                       (470, hud_top + 60), COLOR_WARN, scale=0.6)
 
         # 방금 틀린 음을 잠깐 알려 준다.
-        if progress.get("last_ok") is False and view.since_progress < 1.2:
+        if (view.show_feedback and progress.get("last_ok") is False
+                and view.since_progress < 1.2):
             missed = progress.get("last_note")
             if progress.get("last_missing"):
                 # 연습 모드에서 화음을 덜 친 경우 — 빠진 음을 짚어 준다.
@@ -915,6 +927,11 @@ def parse_args():
                         help="브라우저 자동 열기 끄기")
     parser.add_argument("--no-sound", action="store_true",
                         help="건반 소리 에코 끄기")
+    parser.add_argument("--no-hint", action="store_true",
+                        help="[실험용] 다음 음 안내(AR 마커·Next 텍스트) 끄기")
+    parser.add_argument("--no-feedback", action="store_true",
+                        help="[실험용] 실시간 피드백(색 변화·틀림 메시지) "
+                             "끄기. 건반 소리·최종 점수는 유지")
     parser.add_argument("--no-serve", action="store_true",
                         help="웹 UI·세션 없이 악보만 자유 재생")
     parser.add_argument("--list-midi", action="store_true",
@@ -1331,7 +1348,13 @@ def main():
             speed_scale=args.speed_scale,
             source_factory=source_factory,
         )
-        view = SessionView(manager, settings)
+        session_flags.SHOW_HINT = not args.no_hint
+        session_flags.SHOW_FEEDBACK = not args.no_feedback
+        manager.show_hint = not args.no_hint
+        manager.show_feedback = not args.no_feedback
+        view = SessionView(manager, settings,
+                           show_hint=not args.no_hint,
+                           show_feedback=not args.no_feedback)
         server, url = start_web_ui(manager, args)
 
         if server is None:

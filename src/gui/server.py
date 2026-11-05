@@ -264,6 +264,9 @@ def _make_handler(manager: SessionManager):
                 "practice": settings.practice_mode,
                 "speed_scale": manager.speed_scale,
                 "effective_speed": manager.effective_speed,
+                # [실험용] 웹 UI 의 다음 음 안내 / 실시간 피드백 표시 여부
+                "show_hint": getattr(manager, "show_hint", True),
+                "show_feedback": getattr(manager, "show_feedback", True),
             }
             payload.update(manager.snapshot(since))
             return payload
