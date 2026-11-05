@@ -772,6 +772,17 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
         draw_text_right(output, status_message, 800 - 15, hud_top + 26,
                         status_color, scale=0.5)
 
+        if web_video and manager is not None:
+            # Send the exact AR-rendered frame to the central browser viewer.
+            # Never re-open the camera or modify MIDI/judgement logic here.
+            ok, encoded = cv2.imencode(".jpg", output,
+                                       [cv2.IMWRITE_JPEG_QUALITY, 75])
+            if ok:
+                manager.publish_video_frame(encoded.tobytes())
+            # Rendering is web-only after initial calibration; there is no
+            # separate performance window. Camera index is set by --camera.
+            continue
+
         if output.shape[:2] != window_shape:
             # Keep rendering coordinates intact; enlarge only the display window.
             # 보기 전환으로 세로 비율이 바뀌면 창 크기도 다시 맞춘다.
@@ -911,6 +922,8 @@ def parse_args():
                              "(기본: 7, 0 이면 전부 정확히)")
     parser.add_argument("--no-camera", action="store_true",
                         help="카메라·AR 창 없이 웹 UI 와 판정만 돌리기")
+    parser.add_argument("--separate-window", action="store_true",
+                        help="AR 화면을 브라우저 대신 별도 OpenCV 창으로 표시")
     parser.add_argument("--no-browser", action="store_true",
                         help="브라우저 자동 열기 끄기")
     parser.add_argument("--no-sound", action="store_true",
@@ -1332,6 +1345,7 @@ def main():
             source_factory=source_factory,
         )
         view = SessionView(manager, settings)
+        manager.video_enabled = not args.no_camera and not args.separate_window
         server, url = start_web_ui(manager, args)
 
         if server is None:
@@ -1362,11 +1376,13 @@ def main():
 
         run_ar_loop(cap, points.copy(), view=view, manager=manager,
                     free_notes=free_notes, url=url, base_note=base_note,
-                    settings=settings)
+                    settings=settings,
+                    web_video=manager is not None and manager.video_enabled)
     except KeyboardInterrupt:
         print("\n종료합니다.")
     finally:
         if manager is not None:
+            manager.video_enabled = False
             manager.stop()
         if server is not None:
             server.shutdown()
