@@ -1,5 +1,6 @@
 import cv2
 import sys
+import time
 
 
 class Camera:
@@ -46,30 +47,38 @@ def open_camera(index=None):
     candidates = (1, 0) if index is None else (index,)
 
     for candidate in candidates:
-        # On macOS, select the native AVFoundation backend explicitly.
-        # This avoids backend-dependent index mappings when choosing USB webcams.
+        # macOS USB UVC cameras sometimes need a short warmup and may not
+        # support the requested 1280x720 mode. Try native defaults first.
         backend = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
-        cap = cv2.VideoCapture(candidate, backend)
-        selected = False
-        try:
-            if not cap.isOpened():
-                continue
+        for resolution in (None, (1280, 720), (640, 480)):
+            cap = cv2.VideoCapture(candidate, backend)
+            selected = False
+            try:
+                if not cap.isOpened():
+                    break  # Device unavailable, not a resolution issue.
 
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                if resolution is not None:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, resolution[0])
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resolution[1])
 
-            # Verify video delivery before choosing the device.
-            for _ in range(5):
-                ok, frame = cap.read()
-                if ok and frame is not None and frame.size > 0:
-                    print(f"카메라 선택: {candidate}번")
-                    selected = True
-                    return Camera(cap, candidate)
-        except cv2.error:
-            continue
-        finally:
-            if not selected:
-                cap.release()
+                deadline = time.monotonic() + 3.0
+                while time.monotonic() < deadline:
+                    ok, frame = cap.read()
+                    if ok and frame is not None and frame.size > 0:
+                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        print(f"카메라 선택: {candidate}번 ({width}x{height})")
+                        selected = True
+                        return Camera(cap, candidate)
+                    time.sleep(0.1)
+
+                mode = "기본" if resolution is None else f"{resolution[0]}x{resolution[1]}"
+                print(f"카메라 {candidate}번: {mode} 해상도 영상 수신 실패, 재시도")
+            except cv2.error as exc:
+                print(f"카메라 {candidate}번: OpenCV 오류: {exc}")
+            finally:
+                if not selected:
+                    cap.release()
 
     tried = ", ".join(str(candidate) for candidate in candidates)
     raise RuntimeError(f"카메라 연결 실패 (시도한 번호: {tried}). "
