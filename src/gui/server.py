@@ -294,6 +294,8 @@ def _make_handler(manager: SessionManager):
             path, _, query = self.path.partition("?")
             if path == "/":
                 self._serve_index()
+            elif path == "/video.jpg":
+                self._serve_video_frame()
             elif path == "/video.mjpg":
                 self._stream_video()
             elif path == "/api/state":
@@ -307,6 +309,23 @@ def _make_handler(manager: SessionManager):
                 self._send_json(self._state_payload(since))
             else:
                 self.send_error(404)
+
+        def _serve_video_frame(self):
+            """Serve one complete JPEG; browsers fetch frames independently."""
+            with manager._video_cond:
+                frame = manager._video_frame
+            if not manager.video_enabled or frame is None:
+                self.send_error(503, "AR frame not ready")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(frame)))
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.end_headers()
+            try:
+                self.wfile.write(frame)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
 
         def _stream_video(self):
             if not manager.video_enabled:
