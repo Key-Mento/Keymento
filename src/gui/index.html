@@ -5,363 +5,176 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Keymento</title>
 <style>
-  :root {
-    --bg: #12151c;
-    --card: #1b202b;
-    --card-edge: #262d3c;
-    --text: #e8ecf4;
-    --muted: #8a93a6;
-    --accent: #4f8cff;
-    --accent-soft: rgba(79, 140, 255, .16);
-    --good: #3ecf8e;
-    --warn: #ffc857;
-    --bad: #ff6b6b;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
-    min-height: 100vh;
-    padding: 20px 16px 48px;
-  }
-  main { max-width: 560px; margin: 0 auto; display: grid; gap: 14px; }
+:root {
+  --bg:#282c34; --surface:#1e2127; --raised:#21252b; --overlay:#3e4451;
+  --text:#d7dae0; --muted:#8b95a7; --border:#3e4451;
+  --accent:#d19a66; --accent-hover:#e5c07b;
+  --good:#98c379; --blue:#61afef; --cyan:#56b6c2; --bad:#e06c75; --yellow:#e5c07b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif;background:var(--bg);color:var(--text)}
+button,select{font:inherit}
+button{cursor:pointer}
+button:disabled,select:disabled{opacity:.45;cursor:not-allowed}
 
-  header { display: flex; align-items: center; justify-content: space-between; padding: 4px 2px 8px; }
-  header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
-  #stateBadge {
-    font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 999px;
-    background: var(--card-edge); color: var(--muted);
-  }
-  #stateBadge.playing { background: var(--accent-soft); color: var(--accent); }
-  #stateBadge.done { background: rgba(62,207,142,.15); color: var(--good); }
-  #stateBadge.error, #stateBadge.aborted { background: rgba(255,107,107,.14); color: var(--bad); }
+.app{height:100vh;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.18);z-index:5}
+.header{height:44px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:5px 10px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:750;letter-spacing:-.02em;white-space:nowrap}
+.brandMark{width:30px;height:30px;border-radius:6px;background:var(--accent);color:var(--surface);display:grid;place-items:center;font-size:18px}
+.brand small{font-weight:500;color:var(--muted);margin-left:3px}
+.transport{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0}
+#mainBtn{width:34px;height:32px;border:0;border-radius:5px;background:var(--accent);color:var(--surface);font-weight:800}
+#mainBtn:hover:not(:disabled){background:var(--accent-hover)}
+#mainBtn.stop{background:var(--bad);color:#fff}
+.stateBadge{font-size:12px;color:var(--muted);padding:5px 9px;border-radius:4px;background:var(--raised);border:1px solid var(--border);white-space:nowrap}
+.stateBadge.playing{color:var(--good)} .stateBadge.countdown{color:var(--accent)} .stateBadge.done{color:var(--blue)} .stateBadge.error,.stateBadge.aborted{color:var(--bad)}
+.headerRight{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
 
-  .card {
-    background: var(--card); border: 1px solid var(--card-edge);
-    border-radius: 14px; padding: 16px;
-  }
-  .card h2 {
-    font-size: 13px; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: .06em; margin-bottom: 12px;
-  }
+.controls{display:grid;grid-template-columns:minmax(180px,1.5fr) repeat(3,minmax(150px,1fr));gap:6px;padding:6px 8px;background:var(--bg);border-top:1px solid var(--border)}
+.controlBox{min-width:0;display:flex;align-items:center;gap:7px;padding:5px 7px;background:var(--surface);border:1px solid var(--border);border-radius:4px}
+.controlBox label{font-size:11px;color:var(--muted);white-space:nowrap}
+select{width:100%;min-width:0;padding:5px 7px;background:var(--raised);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none}
+select:focus{border-color:var(--accent)}
+.segment{display:flex;gap:3px;flex:1;min-width:0}
+.segment button{flex:1;min-width:0;padding:5px 7px;border:0;border-radius:4px;background:var(--raised);color:var(--text);font-size:12px;white-space:nowrap}
+.segment button:hover:not(:disabled){background:var(--overlay)}
+.segment button.active{background:var(--accent);color:var(--surface);font-weight:700}
+#speedNote{grid-column:1/-1;font-size:11px;color:var(--accent);padding-left:4px;margin-top:-2px}
+#speedNote:empty{display:none}
 
-  /* 곡 목록 */
-  #songList { display: grid; gap: 8px; }
-  .song {
-    display: flex; align-items: center; gap: 10px;
-    padding: 12px 14px; border-radius: 10px; cursor: pointer;
-    border: 1px solid var(--card-edge); background: transparent;
-    color: var(--text); font-size: 15px; text-align: left; width: 100%;
-  }
-  .song .dot {
-    width: 16px; height: 16px; border-radius: 50%; flex: none;
-    border: 2px solid var(--muted);
-  }
-  .song.selected { border-color: var(--accent); background: var(--accent-soft); }
-  .song.selected .dot { border-color: var(--accent); background: var(--accent); }
+.workspace{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 290px;overflow:hidden}
+.stage{position:relative;min-width:0;overflow:hidden;background:linear-gradient(180deg,#2c323c 0%,#282c34 62%,#252931 100%)}
+.stage:before{content:"";position:absolute;inset:0;background:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.02) 1px,transparent 1px);background-size:100% 52px,64px 100%;pointer-events:none}
+.emptyState,.countdown,.playStage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.emptyState{flex-direction:column;gap:10px;color:var(--muted);text-align:center;padding:30px}
+.emptyState .musicIcon{font-size:54px;opacity:.8}.emptyState b{color:var(--text);font-size:20px}.emptyState p{font-size:13px;max-width:440px;line-height:1.6}
+.countdown{display:none;font-size:112px;font-weight:800;color:var(--accent);text-shadow:0 8px 30px rgba(0,0,0,.25)}
+.playStage{display:none;flex-direction:column;justify-content:flex-end;padding:28px 28px 20px}
+.noteRain{position:absolute;inset:0 0 92px;overflow:hidden;pointer-events:none}
+.noteBeam{position:absolute;left:50%;bottom:10%;transform:translateX(-50%);min-width:180px;padding:18px 30px;border:1px solid rgba(209,154,102,.7);background:rgba(30,33,39,.88);box-shadow:0 0 40px rgba(209,154,102,.12);text-align:center;border-radius:6px}
+.noteBeam .caption{font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}.noteBeam #nextNoteName{display:block;font-size:64px;color:var(--accent);line-height:1.05;margin-top:6px}.noteBeam.chord #nextNoteName{font-size:42px}
+.targetLine{position:absolute;left:0;right:0;bottom:18%;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.7}
+#lastHit{position:absolute;left:50%;top:20%;transform:translateX(-50%);font-size:28px;font-weight:800;text-align:center;min-height:40px;white-space:nowrap;text-shadow:0 2px 10px rgba(0,0,0,.4)}
+#lastHit.ok{color:var(--good)} #lastHit.bad{color:var(--bad)}
+.progressBlock{width:min(760px,94%);position:relative;z-index:2}
+.progressMeta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px}
+.bar{height:4px;border-radius:2px;background:var(--overlay);overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
 
-  /* 속도 / 입력 */
-  .segment { display: flex; gap: 8px; flex-wrap: wrap; }
-  .segment button {
-    flex: 1; min-width: 64px; padding: 12px 8px; border-radius: 10px;
-    border: 1px solid var(--card-edge); background: transparent;
-    color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer;
-  }
-  .segment button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-  #modeDesc { margin-top: 10px; font-size: 13px; line-height: 1.5; color: var(--muted); }
-  #speedNote { margin-top: 10px; font-size: 13px; color: var(--muted); }
-  #speedNote:empty { display: none; }
+.sidepanel{border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}.panelHeader b{font-size:13px}.panelHeader span{font-size:11px;color:var(--muted)}
+#modeDesc{padding:8px 12px;font-size:11px;line-height:1.5;color:var(--muted);border-bottom:1px solid var(--border)}
+#feed{flex:1;min-height:0;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:4px}
+.feedItem{display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:7px;padding:7px;background:var(--raised);border:1px solid transparent;border-radius:4px;font-size:12px}.feedItem:hover{border-color:var(--border)}.feedItem .idx{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.feedItem span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grade-Perfect{color:var(--good);font-weight:700}.grade-Great{color:var(--blue);font-weight:700}.grade-Good{color:var(--yellow);font-weight:700}.grade-Miss,.pitch-bad{color:var(--bad);font-weight:700}
+#hint{min-height:26px;padding:6px 10px;color:var(--bad);font-size:11px;border-top:1px solid var(--border)}
 
-  /* 시작/중지 */
-  #mainBtn {
-    width: 100%; padding: 16px; border: none; border-radius: 14px;
-    font-size: 18px; font-weight: 700; cursor: pointer;
-    background: var(--accent); color: #fff;
-  }
-  #mainBtn.stop { background: var(--bad); }
-  #mainBtn:disabled { opacity: .45; cursor: default; }
-  #hint { text-align: center; color: var(--muted); font-size: 13px; margin-top: 8px; min-height: 18px; }
+.keyboardWrap{height:118px;flex:none;background:var(--surface);border-top:1px solid var(--border);padding:8px 12px 10px;display:flex;flex-direction:column;gap:5px}
+.keyboardMeta{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}.keyboard{position:relative;flex:1;display:flex;max-width:1100px;width:100%;margin:0 auto;user-select:none}
+.key.white{position:relative;flex:1;background:#e7e8eb;border:1px solid #656b76;border-radius:0 0 3px 3px;margin-right:-1px;min-width:0}.key.white.target{background:var(--accent);box-shadow:0 0 18px rgba(209,154,102,.55) inset}.key.white.hit{background:var(--good)}
+.key.black{position:absolute;top:0;height:61%;width:2.15%;transform:translateX(-50%);background:#17191e;border:1px solid #090a0c;border-radius:0 0 3px 3px;z-index:2;box-shadow:0 3px 4px rgba(0,0,0,.35)}.key.black.target{background:var(--accent);box-shadow:0 0 14px rgba(209,154,102,.7)}.key.black.hit{background:var(--good)}
 
-  /* 진행 상황 */
-  #liveCard { display: none; }
-  #countdownNum { font-size: 64px; font-weight: 800; text-align: center; color: var(--accent); }
-  #progressWrap { display: none; }
-  /* AR 창 없이 돌릴 때(run nocam)는 여기가 유일한 '쳐야 할 음' 표시다.
-     멀리서도 보이도록 크게 잡는다. */
-  #nextNote { text-align: center; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
-  #nextNote b { display: block; color: var(--accent); font-size: 46px; line-height: 1.15; margin-top: 2px; }
-  #lastHit { text-align: center; font-size: 20px; font-weight: 700; min-height: 26px; margin-bottom: 10px; }
-  #lastHit.ok { color: var(--good); }
-  #lastHit.bad { color: var(--bad); }
-  .bar { height: 8px; border-radius: 999px; background: var(--card-edge); overflow: hidden; margin-bottom: 6px; }
-  .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .2s; }
-  #progressText { font-size: 13px; color: var(--muted); text-align: right; margin-bottom: 10px; }
+#resultCard{display:none;position:absolute;inset:8%;z-index:4;background:rgba(30,33,39,.96);border:1px solid var(--border);border-radius:8px;box-shadow:0 18px 70px rgba(0,0,0,.45);padding:24px;align-items:center;justify-content:center;text-align:center}.resultInner{width:min(680px,100%)}.resultKicker{font-size:12px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}.resultTitle{font-size:24px;margin:5px 0 14px}.score{font-size:72px;font-weight:800;color:var(--good);line-height:1}.score small{font-size:18px;color:var(--muted);font-weight:600}.resultRow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px}.metric{padding:14px;background:var(--raised);border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px}.metric b{display:block;color:var(--text);font-size:24px;margin-bottom:3px}#gradeRow{display:flex;justify-content:center;flex-wrap:wrap;gap:12px;margin-top:16px;font-size:12px}
 
-  #feed { display: grid; gap: 6px; max-height: 260px; overflow-y: auto; }
-  .feedItem {
-    display: flex; justify-content: space-between; gap: 8px;
-    font-size: 14px; padding: 8px 10px; border-radius: 8px; background: var(--bg);
-  }
-  .feedItem .idx { color: var(--muted); flex: none; }
-  .grade-Perfect { color: var(--good); font-weight: 600; }
-  .grade-Great { color: var(--accent); font-weight: 600; }
-  .grade-Good { color: var(--warn); font-weight: 600; }
-  .grade-Miss { color: var(--bad); font-weight: 600; }
-  .pitch-bad { color: var(--bad); }
-
-  /* 결과 */
-  #resultCard { display: none; text-align: center; }
-  #overallScore { font-size: 52px; font-weight: 800; color: var(--good); }
-  #overallScore small { font-size: 18px; color: var(--muted); font-weight: 600; }
-  .resultRow { display: flex; justify-content: space-around; margin-top: 14px; }
-  .resultRow div { font-size: 13px; color: var(--muted); }
-  .resultRow b { display: block; font-size: 20px; color: var(--text); margin-bottom: 2px; }
-  #gradeRow { margin-top: 14px; display: flex; justify-content: space-around; font-size: 13px; }
+@media(max-width:950px){.controls{grid-template-columns:1fr 1fr}.workspace{grid-template-columns:1fr}.sidepanel{position:absolute;right:0;top:0;bottom:118px;width:270px;z-index:3;background:rgba(30,33,39,.96)}.stage{margin-right:270px}}
+@media(max-width:700px){html,body{overflow:auto}.app{min-height:100vh;height:auto;overflow:visible}.header{grid-template-columns:1fr auto}.transport{justify-content:flex-end}.headerRight{display:none}.controls{grid-template-columns:1fr}.workspace{display:flex;flex-direction:column;min-height:620px}.stage{margin-right:0;min-height:430px}.sidepanel{position:static;width:auto;min-height:220px}.keyboardWrap{height:105px;position:sticky;bottom:0;z-index:10}.noteBeam #nextNoteName{font-size:54px}#resultCard{inset:4%}}
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <h1>🎹 Keymento</h1>
-    <span id="stateBadge">대기 중</span>
-  </header>
-
-  <section class="card">
-    <h2>곡 선택</h2>
-    <div id="songList"></div>
-  </section>
-
-  <section class="card">
-    <h2>속도</h2>
-    <div class="segment" id="speedRow"></div>
-    <div id="speedNote"></div>
-  </section>
-
-  <section class="card">
-    <h2>입력</h2>
-    <div class="segment" id="inputRow"></div>
-  </section>
-
-  <section class="card">
-    <h2>모드</h2>
-    <div class="segment" id="modeRow"></div>
-    <div id="modeDesc"></div>
-  </section>
-
-  <div>
-    <button id="mainBtn">▶ 연주 시작</button>
-    <div id="hint"></div>
+<div class="app">
+  <div class="topbar">
+    <div class="header">
+      <div class="brand"><span class="brandMark">♫</span><span>KEYMENTO <small>piano learning</small></span></div>
+      <div class="transport"><button id="mainBtn" title="연주 시작">▶</button><span id="stateBadge" class="stateBadge">대기 중</span></div>
+      <div class="headerRight"><span id="currentSongLabel">곡을 선택하세요</span></div>
+    </div>
+    <div class="controls">
+      <div class="controlBox"><label>SONG</label><select id="songSelect"></select></div>
+      <div class="controlBox"><label>SPEED</label><div class="segment" id="speedRow"></div></div>
+      <div class="controlBox"><label>INPUT</label><div class="segment" id="inputRow"></div></div>
+      <div class="controlBox"><label>MODE</label><div class="segment" id="modeRow"></div></div>
+      <div id="speedNote"></div>
+    </div>
   </div>
 
-  <section class="card" id="liveCard">
-    <h2>진행 상황</h2>
-    <div id="countdownNum"></div>
-    <div id="progressWrap">
-      <div id="nextNote">지금 쳐야 할 건반<b id="nextNoteName">-</b></div>
-      <div id="lastHit"></div>
-      <div class="bar"><i id="barFill"></i></div>
-      <div id="progressText"></div>
-      <div id="feed"></div>
-    </div>
-  </section>
+  <div class="workspace">
+    <main class="stage">
+      <div id="emptyState" class="emptyState"><div class="musicIcon">♬</div><b>곡을 선택하고 연주를 시작하세요</b><p>연주 중에는 다음 건반이 아래 피아노에서 강조되고, 중앙에서 즉시 판정을 확인할 수 있습니다.</p></div>
+      <div id="countdownNum" class="countdown"></div>
+      <div id="playStage" class="playStage">
+        <div class="noteRain"><div class="targetLine"></div><div id="lastHit"></div><div id="noteBeam" class="noteBeam"><span class="caption">NEXT NOTE</span><b id="nextNoteName">-</b></div></div>
+        <div class="progressBlock"><div class="progressMeta"><span>PERFORMANCE</span><span id="progressText">0 / 0</span></div><div class="bar"><i id="barFill"></i></div></div>
+      </div>
+      <section id="resultCard"><div class="resultInner"><div class="resultKicker">Session complete</div><div class="resultTitle">연주 결과</div><div id="overallScore" class="score">0<small> / 100</small></div><div class="resultRow"><div class="metric"><b id="pitchAcc">-</b><span id="pitchAccLabel">음정 정확도</span></div><div class="metric"><b id="timingAcc">-</b><span id="timingAccLabel">박자 정확도</span></div></div><div id="gradeRow"></div></div></section>
+    </main>
 
-  <section class="card" id="resultCard">
-    <h2>최종 결과</h2>
-    <div id="overallScore">0<small> / 100점</small></div>
-    <div class="resultRow">
-      <div><b id="pitchAcc">-</b><span id="pitchAccLabel">음정 정확도</span></div>
-      <div><b id="timingAcc">-</b><span id="timingAccLabel">박자 정확도</span></div>
-    </div>
-    <div id="gradeRow"></div>
-  </section>
-</main>
+    <aside class="sidepanel"><div class="panelHeader"><b>LIVE FEEDBACK</b><span>real-time</span></div><div id="modeDesc"></div><div id="feed"></div><div id="hint"></div></aside>
+  </div>
 
+  <div class="keyboardWrap"><div class="keyboardMeta"><span>32-KEY GUIDE</span><span id="keyboardHint">다음 건반이 강조됩니다</span></div><div id="keyboard" class="keyboard"></div></div>
+</div>
 <script>
-const INPUT_LABELS = { local: "로컬 MIDI", udp: "라즈베리파이 (UDP)" };
-const STATE_LABELS = {
-  idle: "대기 중", countdown: "카운트다운", playing: "연주 중",
-  done: "완주!", aborted: "중단됨", error: "오류",
-};
+const INPUT_LABELS={local:"로컬 MIDI",udp:"라즈베리파이 (UDP)"};
+const STATE_LABELS={idle:"대기 중",countdown:"카운트다운",playing:"연주 중",done:"완주!",aborted:"중단됨",error:"오류"};
 const GRADE_EMOJI = { Perfect: "✨", Great: "👍", Good: "👌", Miss: "☁️" };
+const $=id=>document.getElementById(id);
+let lastSeq=0,running=false;
 
-let lastSeq = 0;
-let running = false;
-
-const $ = (id) => document.getElementById(id);
-
-async function postJSON(url, body) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    $("hint").textContent = data.error || "요청 실패";
-    setTimeout(() => { $("hint").textContent = ""; }, 3000);
+function midiName(n){const names=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];return names[n%12]+(Math.floor(n/12)-1)}
+function buildKeyboard(){
+  const root=$("keyboard"); root.innerHTML="";
+  const min=48,max=79,white=[];
+  for(let n=min;n<=max;n++){if(![1,3,6,8,10].includes(n%12)){const k=document.createElement("div");k.className="key white";k.dataset.midi=n;root.appendChild(k);white.push(n)}}
+  for(let n=min;n<=max;n++){
+    if(![1,3,6,8,10].includes(n%12))continue;
+    let whitesBefore=0;for(let m=min;m<n;m++)if(![1,3,6,8,10].includes(m%12))whitesBefore++;
+    const k=document.createElement("div");k.className="key black";k.dataset.midi=n;k.style.left=(100*whitesBefore/white.length)+"%";root.appendChild(k)
   }
-  if (data.songs) render(data);
-  return data;
 }
+function updateKeyboard(targets=[]){
+  document.querySelectorAll(".key").forEach(k=>{k.classList.remove("target","hit");const n=Number(k.dataset.midi);if(targets.includes(n))k.classList.add("target");})
+}
+async function postJSON(url,body){
+  const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){$("hint").textContent=data.error||"요청 실패";setTimeout(()=>{$("hint").textContent=""},3000)}
+  if(data.songs)render(data); return data
+}
+function render(s){
+  running=s.running;
+  const badge=$("stateBadge");badge.textContent=STATE_LABELS[s.state]||s.state;badge.className="stateBadge "+s.state;
+  const selectedSong=s.songs.find(x=>x.id===s.selected);$("currentSongLabel").textContent=selectedSong?selectedSong.name:"곡을 선택하세요";
 
-function render(s) {
-  running = s.running;
+  const songSelect=$("songSelect");const current=songSelect.value;songSelect.innerHTML="";
+  if(!s.songs.length){const o=document.createElement("option");o.textContent="songs/ 폴더에 MIDI 없음";o.value="";songSelect.appendChild(o)}
+  for(const song of s.songs){const o=document.createElement("option");o.value=song.id;o.textContent=song.name;if(song.id===s.selected)o.selected=true;songSelect.appendChild(o)}
+  songSelect.disabled=running||!s.songs.length;songSelect.onchange=()=>postJSON("/api/select",{song_id:songSelect.value});
 
-  // 상태 배지
-  const badge = $("stateBadge");
-  badge.textContent = STATE_LABELS[s.state] || s.state;
-  badge.className = s.state;
+  const speedRow=$("speedRow");speedRow.innerHTML="";for(const p of s.presets){const b=document.createElement("button");b.textContent=p+"x";b.disabled=running;if(Math.abs(p-s.speed)<1e-9)b.className="active";b.onclick=()=>postJSON("/api/speed",{speed:p});speedRow.appendChild(b)}
+  $("speedNote").textContent=Math.abs(s.speed_scale-1)<1e-9?"":`AR 배율 ${s.speed_scale}x · 실제 ${s.effective_speed.toFixed(2)}x`;
 
-  // 곡 목록
-  const list = $("songList");
-  list.innerHTML = "";
-  if (!s.songs.length) {
-    list.innerHTML = '<div style="color:var(--muted);font-size:14px">songs/ 폴더에 .mid 파일이 없습니다.</div>';
-  }
-  for (const song of s.songs) {
-    const btn = document.createElement("button");
-    btn.className = "song" + (song.id === s.selected ? " selected" : "");
-    btn.disabled = running;
-    btn.innerHTML = '<span class="dot"></span><span></span>';
-    btn.lastElementChild.textContent = song.name;
-    btn.onclick = () => postJSON("/api/select", { song_id: song.id });
-    list.appendChild(btn);
-  }
+  const inputRow=$("inputRow");inputRow.innerHTML="";for(const src of s.input_sources){const b=document.createElement("button");b.textContent=INPUT_LABELS[src]||src;b.disabled=running;if(src===s.input)b.className="active";b.onclick=()=>postJSON("/api/input",{source:src});inputRow.appendChild(b)}
+  const modeRow=$("modeRow");modeRow.innerHTML="";for(const [practice,label] of [[false,"일반"],[true,"연습"]]){const b=document.createElement("button");b.textContent=label;b.disabled=running;if(practice===s.practice)b.className="active";b.onclick=()=>postJSON("/api/mode",{practice});modeRow.appendChild(b)}
+  $("modeDesc").textContent=s.practice?"정답 건반을 칠 때까지 다음 음으로 넘어가지 않습니다. 기다리는 시간이 섞이므로 박자는 판정하지 않고, 점수는 음정만으로 냅니다.":"악보 시계대로 진행합니다. 시간 안에 못 치면 Miss 로 넘어가고, 음정과 박자를 함께 판정합니다.";
 
-  // 속도 프리셋
-  const speedRow = $("speedRow");
-  speedRow.innerHTML = "";
-  for (const p of s.presets) {
-    const btn = document.createElement("button");
-    btn.textContent = p + "x";
-    btn.disabled = running;
-    if (Math.abs(p - s.speed) < 1e-9) btn.className = "active";
-    btn.onclick = () => postJSON("/api/speed", { speed: p });
-    speedRow.appendChild(btn);
-  }
-  // AR 창에서 띄우면 악보를 눈으로 따라갈 수 있게 배율이 한 번 더
-  // 곱해진다. 고른 값과 실제 값이 달라지므로 숨기지 않고 알려 준다.
-  $("speedNote").textContent =
-    Math.abs(s.speed_scale - 1) < 1e-9
-      ? ""
-      : `AR 배율 ${s.speed_scale}x 적용 → 실제 ${s.effective_speed.toFixed(2)}x`;
+  const mainBtn=$("mainBtn");mainBtn.textContent=running?"■":"▶";mainBtn.className=running?"stop":"";mainBtn.title=running?"연주 중지":"연주 시작";mainBtn.disabled=!running&&!s.songs.length;
 
-  // 입력 소스
-  const inputRow = $("inputRow");
-  inputRow.innerHTML = "";
-  for (const src of s.input_sources) {
-    const btn = document.createElement("button");
-    btn.textContent = INPUT_LABELS[src] || src;
-    btn.disabled = running;
-    if (src === s.input) btn.className = "active";
-    btn.onclick = () => postJSON("/api/input", { source: src });
-    inputRow.appendChild(btn);
-  }
+  $("emptyState").style.display=s.state==="idle"?"flex":"none";
+  $("countdownNum").style.display=s.state==="countdown"?"flex":"none";$("countdownNum").textContent=s.countdown||"";
+  $("playStage").style.display=s.state==="playing"?"flex":"none";
+  if(s.state==="playing"){
+    const p=s.progress||{};$("nextNoteName").textContent=p.next||"🎉";$("noteBeam").classList.toggle("chord",String(p.next||"").length>8);
+    $("barFill").style.width=p.total?(100*p.index/p.total)+"%":"0%";$("progressText").textContent=(p.index||0)+" / "+(p.total||0);
+    const hit=$("lastHit");if(p.last_note===null||p.last_ok===null){hit.textContent="";hit.className=""}else if(p.last_ok){hit.textContent="✅ "+(s.practice&&p.retries?"통과":"정답");hit.className="ok"}else{hit.textContent="❌ 다시 — "+(p.next||"");hit.className="bad"}
+    const targets=Array.isArray(p.next_notes)?p.next_notes:[];updateKeyboard(targets)
+  }else updateKeyboard([]);
 
-  // 모드 (일반 / 연습)
-  const modeRow = $("modeRow");
-  modeRow.innerHTML = "";
-  for (const [practice, label] of [[false, "일반"], [true, "연습"]]) {
-    const btn = document.createElement("button");
-    btn.textContent = label;
-    btn.disabled = running;
-    if (practice === s.practice) btn.className = "active";
-    btn.onclick = () => postJSON("/api/mode", { practice });
-    modeRow.appendChild(btn);
-  }
-  $("modeDesc").textContent = s.practice
-    ? "정답 건반을 칠 때까지 다음 음으로 넘어가지 않습니다. 기다리는 시간이 섞이므로 박자는 판정하지 않고, 점수는 음정만으로 냅니다."
-    : "악보 시계대로 진행합니다. 시간 안에 못 치면 Miss 로 넘어가고, 음정과 박자를 함께 판정합니다.";
-
-  // 시작/중지 버튼
-  const mainBtn = $("mainBtn");
-  if (running) {
-    mainBtn.textContent = "■ 중지";
-    mainBtn.className = "stop";
-  } else {
-    mainBtn.textContent = "▶ 연주 시작";
-    mainBtn.className = "";
-  }
-  mainBtn.disabled = !running && !s.songs.length;
-
-  // 진행 카드
-  const live = $("liveCard");
-  if (s.state === "countdown") {
-    live.style.display = "block";
-    $("countdownNum").textContent = s.countdown;
-    $("progressWrap").style.display = "none";
-  } else if (s.state === "playing") {
-    live.style.display = "block";
-    $("countdownNum").textContent = "";
-    $("progressWrap").style.display = "block";
-    const p = s.progress;
-    $("nextNoteName").textContent = p.next || "🎉";
-    $("barFill").style.width = p.total ? (100 * p.index / p.total) + "%" : "0";
-    $("progressText").textContent = p.index + " / " + p.total;
-
-    // 방금 친 음의 정오답. AR 창이 없을 때 유일한 즉시 피드백이라
-    // 목표 바로 아래에 크게 띄운다.
-    const hit = $("lastHit");
-    if (p.last_note === null || p.last_ok === null) {
-      hit.textContent = "";
-      hit.className = "";
-    } else if (p.last_ok) {
-      hit.textContent = "✅ " + (s.practice && p.retries ? "통과" : "정답");
-      hit.className = "ok";
-    } else {
-      hit.textContent = "❌ 다시 — " + (p.next || "");
-      hit.className = "bad";
-    }
-  } else if (!running) {
-    if (s.state === "idle") live.style.display = "none";
-    $("countdownNum").textContent = "";
-  }
-
-  // 오류 표시
-  if (s.state === "error" && s.error) $("hint").textContent = s.error;
-
-  // 결과 카드
-  const resultCard = $("resultCard");
-  if (s.result) {
-    const practice = s.result.mode === "practice";
-    resultCard.style.display = "block";
-    $("overallScore").innerHTML = s.result.overall + "<small> / 100점</small>";
-    $("pitchAcc").textContent = s.result.pitch_accuracy + "%";
-    $("pitchAccLabel").textContent = practice ? "한 번에 맞춘 비율" : "음정 정확도";
-    $("timingAcc").textContent = practice ? "-" : s.result.timing_accuracy + "%";
-    $("timingAccLabel").textContent = practice ? "박자 판정 없음" : "박자 정확도";
-    const row = $("gradeRow");
-    row.innerHTML = "";
-    if (practice) {
-      const div = document.createElement("div");
-      div.className = "grade-Good";
-      div.textContent = "🔁 총 오타 " + s.result.wrong_attempts + "회";
-      row.appendChild(div);
-    } else {
-      for (const g of ["Perfect", "Great", "Good", "Miss"]) {
-        const div = document.createElement("div");
-        div.className = "grade-" + g;
-        div.textContent = GRADE_EMOJI[g] + " " + g + " " + s.result.timing[g];
-        row.appendChild(div);
-      }
-      if (s.result.wrong_attempts) {
-        const div = document.createElement("div");
-        div.className = "grade-Miss";
-        div.textContent = "✖ 오타 " + s.result.wrong_attempts + "회";
-        row.appendChild(div);
-      }
-    }
-    // 화음은 순서를 따지지 않고 한 박으로 세므로 박자 개수와 음 수가 다르다.
-    if (s.result.chords) {
-      const div = document.createElement("div");
-      div.className = "grade-Good";
-      div.textContent = "🎹 화음 " + s.result.chords + "곳";
-      row.appendChild(div);
-    }
-  } else {
-    resultCard.style.display = "none";
-  }
+  if(s.state==="error"&&s.error)$("hint").textContent=s.error;
+  const result=$("resultCard");
+  if(s.result){result.style.display="flex";const practice=s.result.mode==="practice";$("overallScore").innerHTML=s.result.overall+"<small> / 100점</small>";$("pitchAcc").textContent=s.result.pitch_accuracy+"%";$("pitchAccLabel").textContent=practice?"한 번에 맞춘 비율":"음정 정확도";$("timingAcc").textContent=practice?"-":s.result.timing_accuracy+"%";$("timingAccLabel").textContent=practice?"박자 판정 없음":"박자 정확도";const row=$("gradeRow");row.innerHTML="";
+    if(practice){const d=document.createElement("div");d.className="grade-Good";d.textContent="🔁 총 오타 "+s.result.wrong_attempts+"회";row.appendChild(d)}else{for(const g of ["Perfect","Great","Good","Miss"]){const d=document.createElement("div");d.className="grade-"+g;d.textContent=GRADE_EMOJI[g]+" "+g+" "+s.result.timing[g];row.appendChild(d)}if(s.result.wrong_attempts){const d=document.createElement("div");d.className="grade-Miss";d.textContent="✖ 오타 "+s.result.wrong_attempts+"회";row.appendChild(d)}}if(s.result.chords){const d=document.createElement("div");d.className="grade-Good";d.textContent="🎹 화음 "+s.result.chords+"곳";row.appendChild(d)}
+  }else result.style.display="none";
 
   // 세션 이벤트 → 판정 피드
   for (const [seq, ev] of s.events) {
@@ -404,18 +217,8 @@ function render(s) {
     while ($("feed").children.length > 30) $("feed").lastChild.remove();
   }
 }
-
-async function poll() {
-  try {
-    const res = await fetch("/api/state?since=" + lastSeq);
-    if (res.ok) render(await res.json());
-  } catch (e) { /* 서버 재시작 등 일시 오류는 다음 폴링에서 복구 */ }
-}
-
-$("mainBtn").onclick = () => postJSON(running ? "/api/stop" : "/api/start");
-
-poll();
-setInterval(poll, 600);
+async function poll(){try{const res=await fetch("/api/state?since="+lastSeq);if(res.ok)render(await res.json())}catch(e){}}
+$("mainBtn").onclick=()=>postJSON(running?"/api/stop":"/api/start");buildKeyboard();poll();setInterval(poll,600);
 </script>
 </body>
 </html>
