@@ -132,7 +132,30 @@ const INPUT_LABELS={local:"로컬 MIDI",udp:"라즈베리파이 (UDP)"};
 const STATE_LABELS={idle:"대기 중",countdown:"카운트다운",playing:"연주 중",done:"완주!",aborted:"중단됨",error:"오류"};
 const GRADE_EMOJI = { Perfect: "✨", Great: "👍", Good: "👌", Miss: "☁️" };
 const $=id=>document.getElementById(id);
-let lastSeq=0,running=false,lastGrade=null,videoStarted=false;
+let lastSeq=0,running=false,lastGrade=null,videoStarted=false,videoGeneration=0;
+// Use individually decoded JPEGs rather than browser-dependent MJPEG parsing.
+// The next request is scheduled only after the previous image loads/fails.
+function updateVideoPlayback(enabled){
+  if(enabled===videoStarted)return;
+  videoStarted=enabled;
+  const generation=++videoGeneration;
+  if(!enabled){$("arVideo").removeAttribute("src");return;}
+  function nextFrame(){
+    if(!videoStarted||generation!==videoGeneration)return;
+    const frame=new Image();
+    frame.onload=()=>{
+      if(!videoStarted||generation!==videoGeneration)return;
+      $("arVideo").src=frame.src;
+      setTimeout(nextFrame,180);
+    };
+    frame.onerror=()=>{
+      if(!videoStarted||generation!==videoGeneration)return;
+      setTimeout(nextFrame,500);
+    };
+    frame.src="/video.jpg?t="+Date.now();
+  }
+  nextFrame();
+}
 
 function midiName(n){const names=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];return names[n%12]+(Math.floor(n/12)-1)}
 function buildKeyboard(){
@@ -159,8 +182,7 @@ function render(s){
   const hasVideo=Boolean(s.video_enabled);
   $("stage").classList.toggle("hasVideo",hasVideo);
   $("videoFrame").classList.toggle("active",hasVideo);
-  if(hasVideo&&!videoStarted){$("arVideo").src="/video.mjpg";videoStarted=true}
-  if(!hasVideo&&videoStarted){$("arVideo").removeAttribute("src");videoStarted=false}
+  updateVideoPlayback(hasVideo);
   const badge=$("stateBadge");badge.textContent=STATE_LABELS[s.state]||s.state;badge.className="stateBadge "+s.state;
   const selectedSong=s.songs.find(x=>x.id===s.selected);$("currentSongLabel").textContent=selectedSong?selectedSong.name:"곡을 선택하세요";
 
