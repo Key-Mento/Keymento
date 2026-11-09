@@ -212,6 +212,38 @@ def attach_hud_panel(scene):
     return canvas, display_h * 800 / AR_WINDOW_WIDTH
 
 
+# 브라우저 영상 크롭 여백 — 건반 바운딩 박스 대비 비율. 손이 건반 밖으로
+# 나가도 보이도록 가로는 조금, 세로는 넉넉히 둔다.
+WEB_CROP_MARGIN_X = 0.05
+WEB_CROP_MARGIN_Y = 0.5
+WEB_VIDEO_WIDTH = 1280  # 브라우저로 보내는 영상 가로(px)
+
+
+def crop_to_keyboard(scene, points,
+                     margin_x=WEB_CROP_MARGIN_X, margin_y=WEB_CROP_MARGIN_Y):
+    """원본 카메라 화면에서 건반 영역 + 여백만 잘라 돌려준다.
+
+    points 는 보정된 건반 모서리(원본 카메라 좌표). 크롭 영역이 없거나
+    비정상이면 원본을 그대로 돌려준다.
+    """
+    if points is None:
+        return scene
+
+    pts = np.asarray(points, dtype=np.float64)
+    frame_h, frame_w = scene.shape[:2]
+    x0, y0 = pts.min(axis=0)
+    x1, y1 = pts.max(axis=0)
+    pad_x = (x1 - x0) * margin_x
+    pad_y = (y1 - y0) * margin_y
+    x0, x1 = int(max(x0 - pad_x, 0)), int(min(x1 + pad_x, frame_w))
+    y0, y1 = int(max(y0 - pad_y, 0)), int(min(y1 + pad_y, frame_h))
+
+    if x1 - x0 < 32 or y1 - y0 < 32:
+        return scene
+
+    return scene[y0:y1, x0:x1]
+
+
 def screen_work_area():
     """작업 표시줄을 뺀 화면 영역 (left, top, width, height). 모르면 None.
 
@@ -786,10 +818,25 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
                         status_color, scale=0.5)
 
         if web_video and manager is not None:
-            # Send the exact AR-rendered frame to the central browser viewer.
-            # Never re-open the camera or modify MIDI/judgement logic here.
-            ok, encoded = cv2.imencode(".jpg", output,
-                                       [cv2.IMWRITE_JPEG_QUALITY, 75])
+            # 브라우저에는 HUD 띠 없이 건반 + 여백만 잘라 보낸다 — 진행·판정은
+            # 웹 UI 가 따로 보여 주므로 영상은 건반이 화면을 꽉 채우게 한다.
+            # (V 로 건반만 펴 보는 모드일 때는 이미 건반뿐이라 그대로 보낸다.)
+            web_frame = (crop_to_keyboard(scene, calibration_points)
+                         if full_view else scene)
+            # 잘린 영역이 작으면 브라우저가 늘리며 뭉개므로, 여기서 고르게
+            # 키운 뒤 글자를 그린다(글자까지 흐려지지 않게).
+            web_h, web_w = web_frame.shape[:2]
+            if web_w != WEB_VIDEO_WIDTH:
+                web_frame = cv2.resize(
+                    web_frame,
+                    (WEB_VIDEO_WIDTH, round(web_h * WEB_VIDEO_WIDTH / web_w)),
+                    interpolation=cv2.INTER_CUBIC)
+            web_frame = np.ascontiguousarray(web_frame)
+            if not valid_aruco:
+                draw_text(web_frame, status_message, (10, 24),
+                          status_color, scale=0.5)
+            ok, encoded = cv2.imencode(".jpg", web_frame,
+                                       [cv2.IMWRITE_JPEG_QUALITY, 90])
             if ok:
                 manager.publish_video_frame(encoded.tobytes())
             # Rendering is web-only after initial calibration; there is no
