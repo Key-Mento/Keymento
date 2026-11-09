@@ -44,7 +44,7 @@ select:focus{border-color:var(--accent)}
 #speedNote{grid-column:1/-1;font-size:11px;color:var(--accent);padding-left:4px;margin-top:-2px}
 #speedNote:empty{display:none}
 
-.workspace{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 290px;overflow:hidden}
+.workspace{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 220px;overflow:hidden}
 .stage{position:relative;min-width:0;overflow:hidden;background:linear-gradient(180deg,#2c323c 0%,#282c34 62%,#252931 100%)}
 .videoFrame{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#171a20;overflow:hidden}
 .videoFrame img{display:block;width:100%;height:100%;object-fit:contain}
@@ -74,7 +74,7 @@ select:focus{border-color:var(--accent)}
 .progressMeta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px}
 .bar{height:4px;border-radius:2px;background:var(--overlay);overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
 
-.sidepanel{border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.sidepanel{border-top:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
 .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}.panelHeader b{font-size:13px}.panelHeader span{font-size:11px;color:var(--muted)}
 #modeDesc{padding:8px 12px;font-size:11px;line-height:1.5;color:var(--muted);border-bottom:1px solid var(--border)}
 #feed{flex:1;min-height:0;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:4px}
@@ -82,15 +82,11 @@ select:focus{border-color:var(--accent)}
 .grade-Perfect{color:var(--good);font-weight:700}.grade-Great{color:var(--blue);font-weight:700}.grade-Good{color:var(--yellow);font-weight:700}.grade-Miss,.pitch-bad{color:var(--bad);font-weight:700}
 #hint{min-height:26px;padding:6px 10px;color:var(--bad);font-size:11px;border-top:1px solid var(--border)}
 
-.keyboardWrap{height:118px;flex:none;background:var(--surface);border-top:1px solid var(--border);padding:8px 12px 10px;display:flex;flex-direction:column;gap:5px}
-.keyboardMeta{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}.keyboard{position:relative;flex:1;display:flex;max-width:1100px;width:100%;margin:0 auto;user-select:none}
-.key.white{position:relative;flex:1;background:#e7e8eb;border:1px solid #656b76;border-radius:0 0 3px 3px;margin-right:-1px;min-width:0}.key.white.target{background:var(--accent);box-shadow:0 0 18px rgba(209,154,102,.55) inset}.key.white.hit{background:var(--good)}
-.key.black{position:absolute;top:0;height:61%;width:2.15%;transform:translateX(-50%);background:#17191e;border:1px solid #090a0c;border-radius:0 0 3px 3px;z-index:2;box-shadow:0 3px 4px rgba(0,0,0,.35)}.key.black.target{background:var(--accent);box-shadow:0 0 14px rgba(209,154,102,.7)}.key.black.hit{background:var(--good)}
 
 #resultCard{display:none;position:absolute;inset:8%;z-index:4;background:rgba(30,33,39,.96);border:1px solid var(--border);border-radius:8px;box-shadow:0 18px 70px rgba(0,0,0,.45);padding:24px;align-items:center;justify-content:center;text-align:center}.resultInner{width:min(680px,100%)}.resultKicker{font-size:12px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}.resultTitle{font-size:24px;margin:5px 0 14px}.score{font-size:72px;font-weight:800;color:var(--good);line-height:1}.score small{font-size:18px;color:var(--muted);font-weight:600}.resultRow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px}.metric{padding:14px;background:var(--raised);border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px}.metric b{display:block;color:var(--text);font-size:24px;margin-bottom:3px}#gradeRow{display:flex;justify-content:center;flex-wrap:wrap;gap:12px;margin-top:16px;font-size:12px}
 
-@media(max-width:950px){.controls{grid-template-columns:1fr 1fr}.workspace{grid-template-columns:1fr}.sidepanel{position:absolute;right:0;top:0;bottom:118px;width:270px;z-index:3;background:rgba(30,33,39,.96)}.stage{margin-right:270px}}
-@media(max-width:700px){html,body{overflow:auto}.app{min-height:100vh;height:auto;overflow:visible}.header{grid-template-columns:1fr auto}.transport{justify-content:flex-end}.headerRight{display:none}.controls{grid-template-columns:1fr}.workspace{display:flex;flex-direction:column;min-height:620px}.stage{margin-right:0;min-height:430px}.sidepanel{position:static;width:auto;min-height:220px}.keyboardWrap{height:105px;position:sticky;bottom:0;z-index:10}.noteBeam #nextNoteName{font-size:54px}#resultCard{inset:4%}}
+@media(max-width:950px){.controls{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){html,body{overflow:auto}.app{min-height:100vh;height:auto;overflow:visible}.header{grid-template-columns:1fr auto}.transport{justify-content:flex-end}.headerRight{display:none}.controls{grid-template-columns:1fr}.workspace{display:flex;flex-direction:column;min-height:620px}.stage{margin-right:0;min-height:430px}.sidepanel{position:static;width:auto;min-height:220px}.noteBeam #nextNoteName{font-size:54px}#resultCard{inset:4%}}
 </style>
 </head>
 <body>
@@ -113,7 +109,7 @@ select:focus{border-color:var(--accent)}
   <div class="workspace">
     <main class="stage" id="stage">
       <div id="videoFrame" class="videoFrame"><img id="arVideo" alt="실시간 KEYMENTO AR 카메라 영상"></div>
-      <div id="emptyState" class="emptyState"><div class="musicIcon">♬</div><b>곡을 선택하고 연주를 시작하세요</b><p>연주 중에는 다음 건반이 아래 피아노에서 강조되고, 중앙에서 즉시 판정을 확인할 수 있습니다.</p></div>
+      <div id="emptyState" class="emptyState"><div class="musicIcon">♬</div><b>곡을 선택하고 연주를 시작하세요</b><p>연주 중에는 중앙에서 즉시 판정을 확인하고, 아래에서 기록을 볼 수 있습니다.</p></div>
       <div id="countdownNum" class="countdown"></div>
       <div id="playStage" class="playStage">
         <div class="noteRain"><div class="targetLine"></div><div id="lastHit"></div><div id="noteBeam" class="noteBeam"><span class="caption">NEXT NOTE</span><b id="nextNoteName">-</b></div></div>
@@ -125,7 +121,6 @@ select:focus{border-color:var(--accent)}
     <aside class="sidepanel"><div class="panelHeader"><b>LIVE FEEDBACK</b><span>real-time</span></div><div id="modeDesc"></div><div id="feed"></div><div id="hint"></div></aside>
   </div>
 
-  <div class="keyboardWrap"><div class="keyboardMeta"><span>32-KEY GUIDE</span><span id="keyboardHint">다음 건반이 강조됩니다</span></div><div id="keyboard" class="keyboard"></div></div>
 </div>
 <script>
 const INPUT_LABELS={local:"로컬 MIDI",udp:"라즈베리파이 (UDP)"};
@@ -158,19 +153,6 @@ function updateVideoPlayback(enabled){
 }
 
 function midiName(n){const names=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];return names[n%12]+(Math.floor(n/12)-1)}
-function buildKeyboard(){
-  const root=$("keyboard"); root.innerHTML="";
-  const min=48,max=79,white=[];
-  for(let n=min;n<=max;n++){if(![1,3,6,8,10].includes(n%12)){const k=document.createElement("div");k.className="key white";k.dataset.midi=n;root.appendChild(k);white.push(n)}}
-  for(let n=min;n<=max;n++){
-    if(![1,3,6,8,10].includes(n%12))continue;
-    let whitesBefore=0;for(let m=min;m<n;m++)if(![1,3,6,8,10].includes(m%12))whitesBefore++;
-    const k=document.createElement("div");k.className="key black";k.dataset.midi=n;k.style.left=(100*whitesBefore/white.length)+"%";root.appendChild(k)
-  }
-}
-function updateKeyboard(targets=[]){
-  document.querySelectorAll(".key").forEach(k=>{k.classList.remove("target","hit");const n=Number(k.dataset.midi);if(targets.includes(n))k.classList.add("target");})
-}
 async function postJSON(url,body){
   const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
   const data=await res.json().catch(()=>({}));
@@ -219,8 +201,7 @@ function render(s){
       hit.textContent=p.last_note!==null&&p.last_ok?"✅ 통과":"";
       hit.className=p.last_ok?"ok":"";
     }else{hit.textContent="";hit.className=""}
-    const targets=Array.isArray(p.next_notes)?p.next_notes:[];updateKeyboard(showHint?targets:[])
-  }else updateKeyboard([]);
+    }
 
   if(s.state==="error"&&s.error)$("hint").textContent=s.error;
   const result=$("resultCard");
@@ -284,7 +265,7 @@ function render(s){
   }
 }
 async function poll(){try{const res=await fetch("/api/state?since="+lastSeq);if(res.ok)render(await res.json())}catch(e){}}
-$("mainBtn").onclick=()=>postJSON(running?"/api/stop":"/api/start");buildKeyboard();poll();setInterval(poll,600);
+$("mainBtn").onclick=()=>postJSON(running?"/api/stop":"/api/start");poll();setInterval(poll,600);
 </script>
 </body>
 </html>
