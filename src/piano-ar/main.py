@@ -668,6 +668,10 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
         if not ret:
             break
 
+        # 브라우저 영상은 창이 없어 V 키를 못 받는다 — 웹 UI 의 보기 선택을 따른다.
+        if web_video and manager is not None:
+            full_view = manager.video_view != "flat"
+
         # 추적은 마커 좌표로, 보정 비교·적용은 건반 모서리 좌표로 한다.
         markers = tracker.update(frame, key_area.to_markers(calibration_points))
         detected_points = (None if markers is None
@@ -822,7 +826,7 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
             # 웹 UI 가 따로 보여 주므로 영상은 건반이 화면을 꽉 채우게 한다.
             # (V 로 건반만 펴 보는 모드일 때는 이미 건반뿐이라 그대로 보낸다.)
             web_frame = (crop_to_keyboard(scene, calibration_points)
-                         if full_view else scene)
+                         if manager.video_view == "crop" else scene)
             # 잘린 영역이 작으면 브라우저가 늘리며 뭉개므로, 여기서 고르게
             # 키운 뒤 글자를 그린다(글자까지 흐려지지 않게).
             web_h, web_w = web_frame.shape[:2]

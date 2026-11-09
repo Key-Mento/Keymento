@@ -22,29 +22,29 @@ button:disabled,select:disabled{opacity:.45;cursor:not-allowed}
 .topbar{background:var(--surface);border-bottom:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.18);z-index:5}
 .header{height:44px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:5px 10px}
 .brand{display:flex;align-items:center;gap:9px;font-weight:750;letter-spacing:-.02em;white-space:nowrap}
-.brandMark{width:30px;height:30px;border-radius:6px;background:var(--accent);color:var(--surface);display:grid;place-items:center;font-size:18px}
+.brandMark{width:30px;height:30px;border-radius:6px;background:var(--accent);color:var(--surface);display:grid;place-items:center;font-size:18px;line-height:1}#mainBtn svg{display:block;width:16px;height:16px;fill:currentColor}
 .brand small{font-weight:500;color:var(--muted);margin-left:3px}
 .transport{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0}
-#mainBtn{width:34px;height:32px;border:0;border-radius:5px;background:var(--accent);color:var(--surface);font-weight:800}
+#mainBtn{width:34px;height:32px;display:grid;place-items:center;padding:0;border:0;border-radius:5px;background:var(--accent);color:var(--surface);font-weight:800}
 #mainBtn:hover:not(:disabled){background:var(--accent-hover)}
 #mainBtn.stop{background:var(--bad);color:#fff}
 .stateBadge{font-size:12px;color:var(--muted);padding:5px 9px;border-radius:4px;background:var(--raised);border:1px solid var(--border);white-space:nowrap}
 .stateBadge.playing{color:var(--good)} .stateBadge.countdown{color:var(--accent)} .stateBadge.done{color:var(--blue)} .stateBadge.error,.stateBadge.aborted{color:var(--bad)}
 .headerRight{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
 
-.controls{display:grid;grid-template-columns:minmax(180px,1.5fr) repeat(3,minmax(150px,1fr));gap:6px;padding:6px 8px;background:var(--bg);border-top:1px solid var(--border)}
+.controls{display:grid;grid-template-columns:minmax(180px,1.5fr) repeat(4,minmax(150px,1fr));gap:6px;padding:6px 8px;background:var(--bg);border-top:1px solid var(--border)}
 .controlBox{min-width:0;display:flex;align-items:center;gap:7px;padding:5px 7px;background:var(--surface);border:1px solid var(--border);border-radius:4px}
 .controlBox label{font-size:11px;color:var(--muted);white-space:nowrap}
 select{width:100%;min-width:0;padding:5px 7px;background:var(--raised);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none}
 select:focus{border-color:var(--accent)}
 .segment{display:flex;gap:3px;flex:1;min-width:0}
-.segment button{flex:1;min-width:0;padding:5px 7px;border:0;border-radius:4px;background:var(--raised);color:var(--text);font-size:12px;white-space:nowrap}
+.segment button{flex:1;min-width:0;padding:5px 7px;border:0;border-radius:4px;background:var(--raised);color:var(--text);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .segment button:hover:not(:disabled){background:var(--overlay)}
 .segment button.active{background:var(--accent);color:var(--surface);font-weight:700}
 #speedNote{grid-column:1/-1;font-size:11px;color:var(--accent);padding-left:4px;margin-top:-2px}
 #speedNote:empty{display:none}
 
-.workspace{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 220px;overflow:hidden}
+.workspace{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 150px;overflow:hidden}
 .stage{position:relative;min-width:0;overflow:hidden;background:linear-gradient(180deg,#2c323c 0%,#282c34 62%,#252931 100%)}
 .videoFrame{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#171a20;overflow:hidden}
 .videoFrame img{display:block;width:100%;height:100%;object-fit:contain}
@@ -56,7 +56,6 @@ select:focus{border-color:var(--accent)}
 .stage.hasVideo .noteBeam #nextNoteName{font-size:24px}
 .stage.hasVideo .noteBeam.chord #nextNoteName{font-size:20px}
 .stage.hasVideo .targetLine{display:none}
-.stage.hasVideo #lastHit{left:50%;top:7%;width:max-content;max-width:90%;transform:translateX(-50%);padding:5px 15px;background:rgba(30,33,39,.85);border-radius:6px;font-size:28px}
 .stage.hasVideo .progressBlock{width:calc(100% - 240px);margin-right:auto;background:rgba(30,33,39,.78);padding:8px;border-radius:5px}
 .stage:before{content:"";position:absolute;inset:0;background:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.02) 1px,transparent 1px);background-size:100% 52px,64px 100%;pointer-events:none}
 .emptyState,.countdown,.playStage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
@@ -68,7 +67,7 @@ select:focus{border-color:var(--accent)}
 .noteBeam{position:absolute;left:50%;bottom:10%;transform:translateX(-50%);min-width:180px;padding:18px 30px;border:1px solid rgba(209,154,102,.7);background:rgba(30,33,39,.88);box-shadow:0 0 40px rgba(209,154,102,.12);text-align:center;border-radius:6px}
 .noteBeam .caption{font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}.noteBeam #nextNoteName{display:block;font-size:64px;color:var(--accent);line-height:1.05;margin-top:6px}.noteBeam.chord #nextNoteName{font-size:42px}
 .targetLine{position:absolute;left:0;right:0;bottom:18%;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.7}
-#lastHit{position:absolute;left:50%;top:20%;transform:translateX(-50%);font-size:28px;font-weight:800;text-align:center;min-height:40px;white-space:nowrap;text-shadow:0 2px 10px rgba(0,0,0,.4)}
+#judgeBar{flex:none;height:44px;display:flex;align-items:center;justify-content:center;background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}#lastHit{height:100%;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;text-align:center;line-height:1;white-space:nowrap}#lastHit:empty:before{content:"판정 대기 중";display:block;line-height:1;font-size:13px;font-weight:600;color:var(--muted)}
 #lastHit.ok{color:var(--good)} #lastHit.bad{color:var(--bad)}
 .progressBlock{width:min(760px,94%);position:relative;z-index:2}
 .progressMeta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px}
@@ -102,9 +101,12 @@ select:focus{border-color:var(--accent)}
       <div class="controlBox"><label>SPEED</label><div class="segment" id="speedRow"></div></div>
       <div class="controlBox"><label>INPUT</label><div class="segment" id="inputRow"></div></div>
       <div class="controlBox"><label>MODE</label><div class="segment" id="modeRow"></div></div>
+      <div class="controlBox" id="viewBox" style="display:none"><label>VIEW</label><div class="segment" id="viewRow"></div></div>
       <div id="speedNote"></div>
     </div>
   </div>
+
+  <div id="judgeBar"><div id="lastHit"></div></div>
 
   <div class="workspace">
     <main class="stage" id="stage">
@@ -112,7 +114,7 @@ select:focus{border-color:var(--accent)}
       <div id="emptyState" class="emptyState"><div class="musicIcon">♬</div><b>곡을 선택하고 연주를 시작하세요</b><p>연주 중에는 중앙에서 즉시 판정을 확인하고, 아래에서 기록을 볼 수 있습니다.</p></div>
       <div id="countdownNum" class="countdown"></div>
       <div id="playStage" class="playStage">
-        <div class="noteRain"><div class="targetLine"></div><div id="lastHit"></div><div id="noteBeam" class="noteBeam"><span class="caption">NEXT NOTE</span><b id="nextNoteName">-</b></div></div>
+        <div class="noteRain"><div class="targetLine"></div><div id="noteBeam" class="noteBeam"><span class="caption">NEXT NOTE</span><b id="nextNoteName">-</b></div></div>
         <div class="progressBlock"><div class="progressMeta"><span>PERFORMANCE</span><span id="progressText">0 / 0</span></div><div class="bar"><i id="barFill"></i></div></div>
       </div>
       <section id="resultCard"><div class="resultInner"><div class="resultKicker">Session complete</div><div class="resultTitle">연주 결과</div><div id="overallScore" class="score">0<small> / 100</small></div><div class="resultRow"><div class="metric"><b id="pitchAcc">-</b><span id="pitchAccLabel">음정 정확도</span></div><div class="metric"><b id="timingAcc">-</b><span id="timingAccLabel">박자 정확도</span></div></div><div id="gradeRow"></div></div></section>
@@ -123,7 +125,7 @@ select:focus{border-color:var(--accent)}
 
 </div>
 <script>
-const INPUT_LABELS={local:"로컬 MIDI",udp:"라즈베리파이 (UDP)"};
+const INPUT_LABELS={local:"로컬 MIDI",udp:"Pi (UDP)"};
 const STATE_LABELS={idle:"대기 중",countdown:"카운트다운",playing:"연주 중",done:"완주!",aborted:"중단됨",error:"오류"};
 const GRADE_EMOJI = { Perfect: "✨", Great: "👍", Good: "👌", Miss: "☁️" };
 const $=id=>document.getElementById(id);
@@ -176,11 +178,13 @@ function render(s){
   const speedRow=$("speedRow");speedRow.innerHTML="";for(const p of s.presets){const b=document.createElement("button");b.textContent=p+"x";b.disabled=running;if(Math.abs(p-s.speed)<1e-9)b.className="active";b.onclick=()=>postJSON("/api/speed",{speed:p});speedRow.appendChild(b)}
   $("speedNote").textContent=Math.abs(s.speed_scale-1)<1e-9?"":`AR 배율 ${s.speed_scale}x · 실제 ${s.effective_speed.toFixed(2)}x`;
 
-  const inputRow=$("inputRow");inputRow.innerHTML="";for(const src of s.input_sources){const b=document.createElement("button");b.textContent=INPUT_LABELS[src]||src;b.disabled=running;if(src===s.input)b.className="active";b.onclick=()=>postJSON("/api/input",{source:src});inputRow.appendChild(b)}
+  const inputRow=$("inputRow");inputRow.innerHTML="";for(const src of s.input_sources){const b=document.createElement("button");b.textContent=INPUT_LABELS[src]||src;b.title=src==="udp"?"라즈베리파이 (UDP)":"로컬 MIDI";b.disabled=running;if(src===s.input)b.className="active";b.onclick=()=>postJSON("/api/input",{source:src});inputRow.appendChild(b)}
+  $("viewBox").style.display=hasVideo?"":"none";
+  const viewRow=$("viewRow");viewRow.innerHTML="";for(const [view,label] of [["crop","건반+여백"],["full","전체"],["flat","펴서 보기"]]){const b=document.createElement("button");b.textContent=label;if(view===s.video_view)b.className="active";b.onclick=()=>postJSON("/api/view",{view});viewRow.appendChild(b)}
   const modeRow=$("modeRow");modeRow.innerHTML="";for(const [practice,label] of [[false,"일반"],[true,"연습"]]){const b=document.createElement("button");b.textContent=label;b.disabled=running;if(practice===s.practice)b.className="active";b.onclick=()=>postJSON("/api/mode",{practice});modeRow.appendChild(b)}
   $("modeDesc").textContent=s.practice?"정답 건반을 칠 때까지 다음 음으로 넘어가지 않습니다. 기다리는 시간이 섞이므로 박자는 판정하지 않고, 점수는 음정만으로 냅니다.":"악보 시계대로 진행합니다. 시간 안에 못 치면 Miss 로 넘어가고, 음정과 박자를 함께 판정합니다.";
 
-  const mainBtn=$("mainBtn");mainBtn.textContent=running?"■":"▶";mainBtn.className=running?"stop":"";mainBtn.title=running?"연주 중지":"연주 시작";mainBtn.disabled=!running&&!s.songs.length;
+  const mainBtn=$("mainBtn");mainBtn.innerHTML=running?'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>';mainBtn.className=running?"stop":"";mainBtn.title=running?"연주 중지":"연주 시작";mainBtn.disabled=!running&&!s.songs.length;
 
   $("emptyState").style.display=s.state==="idle"?"flex":"none";
   $("countdownNum").style.display=s.state==="countdown"?"flex":"none";$("countdownNum").textContent=s.countdown||"";

@@ -72,6 +72,8 @@ class SessionManager:
         self._video_frame = None
         self._video_serial = 0
         self.video_enabled = False
+        # 브라우저 영상 보기: crop(건반+여백) / full(카메라 전체) / flat(펴서 보기)
+        self.video_view = "crop"
 
         self._lock = threading.Lock()
         self._thread = None
@@ -288,6 +290,7 @@ def _make_handler(manager: SessionManager):
                 "show_hint": getattr(manager, "show_hint", True),
                 "show_feedback": getattr(manager, "show_feedback", True),
                 "video_enabled": manager.video_enabled,
+                "video_view": manager.video_view,
             }
             payload.update(manager.snapshot(since))
             return payload
@@ -377,6 +380,11 @@ def _make_handler(manager: SessionManager):
                     settings.set_input_source(str(data.get("source")))
                 elif self.path == "/api/mode":
                     settings.set_practice_mode(bool(data.get("practice")))
+                elif self.path == "/api/view":
+                    view = str(data.get("view"))
+                    if view not in ("crop", "full", "flat"):
+                        raise ValueError("알 수 없는 보기: " + view)
+                    manager.video_view = view
                 elif self.path == "/api/start":
                     ok, error = manager.start()
                     if not ok:
