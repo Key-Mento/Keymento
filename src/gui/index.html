@@ -41,6 +41,10 @@ select:focus{border-color:var(--accent)}
 .segment button{flex:1;min-width:0;padding:5px 7px;border:0;border-radius:4px;background:var(--raised);color:var(--text);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .segment button:hover:not(:disabled){background:var(--overlay)}
 .segment button.active{background:var(--accent);color:var(--surface);font-weight:700}
+/* 실행 중인 서버가 이 페이지보다 예전 버전일 때(코드를 고친 뒤 다시 실행 안 함) */
+.staleBanner{display:none;padding:8px 12px;background:var(--bad);color:#fff;font-size:13px;font-weight:700;text-align:center;line-height:1.5}
+/* 요청 실패 안내 — LIVE FEEDBACK 을 접어 둬도 보이게 무대 위에 띄운다 */
+.toast{position:fixed;left:50%;top:104px;transform:translateX(-50%);z-index:20;display:none;max-width:90%;padding:8px 14px;border-radius:6px;background:rgba(224,108,117,.96);color:#fff;font-size:13px;font-weight:700;box-shadow:0 6px 20px rgba(0,0,0,.35)}
 #speedNote{grid-column:1/-1;font-size:11px;color:var(--accent);padding-left:4px;margin-top:-2px}
 #speedNote:empty{display:none}
 
@@ -82,6 +86,24 @@ select:focus{border-color:var(--accent)}
 #hint{min-height:26px;padding:6px 10px;color:var(--bad);font-size:11px;border-top:1px solid var(--border)}
 
 
+/* [실험용] 악보 보기 (--sheet): 영상 자리에 오선 악보(perform/sheet.py 가 그린 SVG)를
+   띄우고, 판정 시계에 맞춰 지나간 자리를 빨갛게 칠한다. 칠의 끝이 음표 머리에
+   닿는 순간이 그 음을 칠 때이고, 지나간 음표는 빨갛게 바뀐다. */
+.sheetView{position:absolute;inset:0 0 52px;display:none;overflow-y:auto;padding:10px 16px;background:#fbfaf6;--sheet-fill:#e53935}
+.stage.hasSheet:before{display:none}
+.stage.hasSheet .sheetView{display:block}
+.stage.hasSheet .emptyState{display:none!important}
+.stage.hasSheet .playStage{background:transparent;padding:0 12px 8px;pointer-events:none}
+.stage.hasSheet .noteBeam,.stage.hasSheet .targetLine{display:none!important}
+.stage.hasSheet .progressBlock{width:100%;background:rgba(30,33,39,.85);padding:8px;border-radius:5px}
+.sheetMsg{padding:20px;color:#5c6370;font-size:14px}
+.score{display:block;margin:0 auto}
+.score .wipe{fill:var(--sheet-fill);fill-opacity:.18}
+.score .halo{fill:none}
+.score .ev.on .hf,.score .ev.on .fl,.score .ev.on .dt{fill:var(--sheet-fill)}
+.score .ev.on .ho,.score .ev.on .st,.score .ev.on .ac{stroke:var(--sheet-fill)}
+.score .ev.cur .halo{fill:var(--sheet-fill);fill-opacity:.28}
+
 #resultCard{display:none;position:absolute;inset:8%;z-index:4;background:rgba(30,33,39,.96);border:1px solid var(--border);border-radius:8px;box-shadow:0 18px 70px rgba(0,0,0,.45);padding:24px;align-items:center;justify-content:center;text-align:center}.resultInner{width:min(680px,100%)}.resultKicker{font-size:12px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}.resultTitle{font-size:24px;margin:5px 0 14px}.score{font-size:72px;font-weight:800;color:var(--good);line-height:1}.score small{font-size:18px;color:var(--muted);font-weight:600}.resultRow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px}.metric{padding:14px;background:var(--raised);border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px}.metric b{display:block;color:var(--text);font-size:24px;margin-bottom:3px}#gradeRow{display:flex;justify-content:center;flex-wrap:wrap;gap:12px;margin-top:16px;font-size:12px}
 
 @media(max-width:950px){.controls{grid-template-columns:1fr 1fr}}
@@ -101,16 +123,19 @@ select:focus{border-color:var(--accent)}
       <div class="controlBox"><label>SPEED</label><div class="segment" id="speedRow"></div></div>
       <div class="controlBox"><label>INPUT</label><div class="segment" id="inputRow"></div></div>
       <div class="controlBox"><label>MODE</label><div class="segment" id="modeRow"></div></div>
-      <div class="controlBox" id="viewBox" style="display:none"><label>VIEW</label><div class="segment" id="viewRow"></div></div>
+      <div class="controlBox" id="viewBox"><label>VIEW</label><div class="segment" id="viewRow"></div></div>
       <div id="speedNote"></div>
     </div>
   </div>
 
+  <div id="staleBanner" class="staleBanner"></div>
   <div id="judgeBar"><div id="lastHit"></div></div>
 
   <div class="workspace">
     <main class="stage" id="stage">
       <div id="videoFrame" class="videoFrame"><img id="arVideo" alt="실시간 KEYMENTO AR 카메라 영상"></div>
+      <div id="sheetView" class="sheetView" aria-label="오선 악보"></div>
+      <div id="toast" class="toast" role="alert"></div>
       <div id="emptyState" class="emptyState"><div class="musicIcon">♬</div><b>곡을 선택하고 연주를 시작하세요</b><p>연주 중에는 중앙에서 즉시 판정을 확인하고, 아래에서 기록을 볼 수 있습니다.</p></div>
       <div id="countdownNum" class="countdown"></div>
       <div id="playStage" class="playStage">
@@ -155,15 +180,33 @@ function updateVideoPlayback(enabled){
 }
 
 function midiName(n){const names=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];return names[n%12]+(Math.floor(n/12)-1)}
+/* 웹 API 판 — gui/server.py 의 API_VERSION 과 같이 올린다 */
+const API_VERSION=3;
+let toastTimer=null;
+function showToast(text){const t=$("toast");t.textContent=text;t.style.display="block";clearTimeout(toastTimer);toastTimer=setTimeout(()=>{t.style.display="none"},5000)}
+function checkServer(s){
+  const api=s.api||0,banner=$("staleBanner");
+  if(api<API_VERSION){ /* 페이지는 새로 읽혔는데 서버는 예전 코드로 돌고 있다 */
+    banner.textContent="⚠ 실행 중인 Keymento 가 이 화면보다 예전 버전이라 일부 기능(악보 보기 등)이 안 됩니다. Keymento 실행 창을 닫고 run.bat 을 다시 실행하세요.";
+    banner.style.display="block";return;
+  }
+  banner.style.display="none";
+  if(api>API_VERSION){ /* 서버가 더 새것 — 페이지를 한 번 새로 읽는다 */
+    try{const k="km-reload-"+api;if(!sessionStorage.getItem(k)){sessionStorage.setItem(k,"1");location.reload()}}catch(e){}
+  }
+}
 async function postJSON(url,body){
   const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
   const data=await res.json().catch(()=>({}));
-  if(!res.ok){$("hint").textContent=data.error||"요청 실패";setTimeout(()=>{$("hint").textContent=""},3000)}
+  if(!res.ok){const msg=data.error||"요청 실패";$("hint").textContent=msg;setTimeout(()=>{$("hint").textContent=""},3000);showToast(msg)}
   if(data.songs)render(data); return data
 }
 function render(s){
-  running=s.running;
-  const hasVideo=Boolean(s.video_enabled);
+  running=s.running;lastState=s;checkServer(s);
+  const sheetMode=Boolean(s.sheet); /* [실험용] --sheet: 영상 대신 악보 */
+  const hasVideo=Boolean(s.video_enabled)&&!sheetMode;
+  $("stage").classList.toggle("hasSheet",sheetMode);
+  if(sheetMode&&s.selected!==sheet.song&&!sheet.loading)loadSheet(s.selected);
   $("stage").classList.toggle("hasVideo",hasVideo);
   $("videoFrame").classList.toggle("active",hasVideo);
   updateVideoPlayback(hasVideo);
@@ -176,18 +219,25 @@ function render(s){
   songSelect.disabled=running||!s.songs.length;songSelect.onchange=()=>postJSON("/api/select",{song_id:songSelect.value});
 
   const speedRow=$("speedRow");speedRow.innerHTML="";for(const p of s.presets){const b=document.createElement("button");b.textContent=p+"x";b.disabled=running;if(Math.abs(p-s.speed)<1e-9)b.className="active";b.onclick=()=>postJSON("/api/speed",{speed:p});speedRow.appendChild(b)}
-  $("speedNote").textContent=Math.abs(s.speed_scale-1)<1e-9?"":`AR 배율 ${s.speed_scale}x · 실제 ${s.effective_speed.toFixed(2)}x`;
+  const speedNotes=[];if(Math.abs(s.speed_scale-1)>=1e-9)speedNotes.push(`AR 배율 ${s.speed_scale}x · 실제 ${s.effective_speed.toFixed(2)}x`);
+  if(s.metronome)speedNotes.push(s.practice?"메트로놈: 일반 모드에서만":"메트로놈 켜짐"); /* [실험용] --metronome */
+  $("speedNote").textContent=speedNotes.join(" · ");
 
   const inputRow=$("inputRow");inputRow.innerHTML="";for(const src of s.input_sources){const b=document.createElement("button");b.textContent=INPUT_LABELS[src]||src;b.title=src==="udp"?"라즈베리파이 (UDP)":"로컬 MIDI";b.disabled=running;if(src===s.input)b.className="active";b.onclick=()=>postJSON("/api/input",{source:src});inputRow.appendChild(b)}
-  $("viewBox").style.display=hasVideo?"":"none";
-  const viewRow=$("viewRow");viewRow.innerHTML="";for(const [view,label] of [["crop","건반+여백"],["full","전체"],["flat","펴서 보기"]]){const b=document.createElement("button");b.textContent=label;if(view===s.video_view)b.className="active";b.onclick=()=>postJSON("/api/view",{view});viewRow.appendChild(b)}
+  /* 무대 보기: AR 영상(자르기 3가지) 또는 [실험용] 악보. 카메라 없이 켜면 기본 화면 / 악보.
+     화면만 바뀌고 판정은 그대로라 연주 중에도 바꿀 수 있다. */
+  $("viewBox").style.display="";
+  const views=s.video_enabled?[["crop","건반+여백"],["full","전체"],["flat","펴서 보기"],["sheet","악보"]]:[["basic","기본"],["sheet","악보"]];
+  const activeView=s.sheet?"sheet":(s.video_enabled?s.video_view:"basic");
+  const viewRow=$("viewRow");viewRow.innerHTML="";for(const [view,label] of views){const b=document.createElement("button");b.textContent=label;if(view===activeView)b.className="active";b.onclick=()=>postJSON("/api/view",{view});viewRow.appendChild(b)}
   const modeRow=$("modeRow");modeRow.innerHTML="";for(const [practice,label] of [[false,"일반"],[true,"연습"]]){const b=document.createElement("button");b.textContent=label;b.disabled=running;if(practice===s.practice)b.className="active";b.onclick=()=>postJSON("/api/mode",{practice});modeRow.appendChild(b)}
   $("modeDesc").textContent=s.practice?"정답 건반을 칠 때까지 다음 음으로 넘어가지 않습니다. 기다리는 시간이 섞이므로 박자는 판정하지 않고, 점수는 음정만으로 냅니다.":"악보 시계대로 진행합니다. 시간 안에 못 치면 Miss 로 넘어가고, 음정과 박자를 함께 판정합니다.";
 
   const mainBtn=$("mainBtn");mainBtn.innerHTML=running?'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>';mainBtn.className=running?"stop":"";mainBtn.title=running?"연주 중지":"연주 시작";mainBtn.disabled=!running&&!s.songs.length;
 
   $("emptyState").style.display=s.state==="idle"?"flex":"none";
-  $("countdownNum").style.display=s.state==="countdown"?"flex":"none";$("countdownNum").textContent=s.countdown||"";
+  // 곡 시작 시각(start_at)을 알면 숫자는 매 프레임 서버 시계로 센다(clockFrame).
+  if(!(s.state==="countdown"&&s.start_at!=null)){$("countdownNum").style.display=s.state==="countdown"?"flex":"none";$("countdownNum").textContent=s.countdown||""}
   $("playStage").style.display=s.state==="playing"?"flex":"none";
   if(s.state==="playing"){
     const p=s.progress||{};const showHint=s.show_hint!==false,showFb=s.show_feedback!==false; /* [실험용] --no-hint / --no-feedback */
@@ -268,7 +318,122 @@ function render(s){
     hit.className=lastGrade.grade==="Miss"?"bad":"ok";
   }
 }
-async function poll(){try{const res=await fetch("/api/state?since="+lastSeq);if(res.ok)render(await res.json())}catch(e){}}
+async function poll(){try{const t0=epochNow();const res=await fetch("/api/state?since="+lastSeq);if(res.ok){const s=await res.json();noteClock(s.server_time,t0,epochNow());render(s)}}catch(e){}}
+
+/* ── 서버 시계 ── start_at(판정 시계의 0초)은 서버 시계라, 응답마다 서버와의 차를
+   재어 둔다. 왕복이 가장 짧았던 응답을 쓴다(그때 어림이 가장 정확하다). */
+let lastState=null,clockOffset=0;const clockSamples=[];
+function epochNow(){return (performance.timeOrigin?performance.timeOrigin+performance.now():Date.now())/1000}
+function noteClock(serverTime,t0,t1){
+  if(typeof serverTime!=="number")return;
+  clockSamples.push({rtt:t1-t0,offset:serverTime-(t0+t1)/2});if(clockSamples.length>12)clockSamples.shift();
+  clockOffset=clockSamples.reduce((a,b)=>b.rtt<a.rtt?b:a).offset;
+}
+function serverNow(){return epochNow()+clockOffset}
+
+/* ── [실험용] 악보 보기 (--sheet) ── 데이터는 /api/sheet (perform/sheet.py 의 오선 SVG).
+   일반 모드: 판정 시계로 줄마다 지나간 자리를 빨갛게 칠하고 지나간 음표를 빨갛게
+   바꾼다. 연습 모드: 끝낸 음표를 빨갛게, 지금 칠 음표에 빨간 후광.
+   --no-hint 면 칠하지 않고 악보만 둔다. */
+const sheet={song:null,loading:false,data:null,svg:null,lines:[],events:[],groupStart:[],ptr:0,scale:1,session:undefined,practiceDone:-1,followed:-1};
+async function loadSheet(songId){
+  sheet.loading=true;
+  try{
+    const res=await fetch("/api/sheet");const data=await res.json().catch(()=>({}));
+    if(!res.ok||data.error)throw new Error(data.error||("HTTP "+res.status));
+    buildSheet(data);sheet.song=data.song;
+  }catch(e){
+    Object.assign(sheet,{data:null,svg:null,lines:[],events:[],song:songId});
+    const view=$("sheetView"),msg=document.createElement("div");view.innerHTML="";msg.className="sheetMsg";msg.textContent="악보를 불러오지 못했습니다: "+e.message;view.appendChild(msg);
+  }finally{sheet.loading=false}
+}
+function buildSheet(data){
+  const view=$("sheetView");view.innerHTML=data.svg||"";view.scrollTop=0; /* 서버가 MIDI 로 만든 SVG */
+  const svg=view.querySelector("svg.score");
+  Object.assign(sheet,{data,svg,groupStart:[],ptr:0,session:undefined,practiceDone:-1,followed:-1});
+  sheet.lines=(data.timeline||[]).map((ln,k)=>Object.assign({},ln,{rect:svg&&svg.querySelector("#w"+k),w:-1}));
+  sheet.events=(data.events||[]).map(e=>Object.assign({},e,{el:svg&&svg.querySelector("#"+e.id),on:false,cur:false})).sort((a,b)=>a.t-b.t);
+  let acc=0;for(const n of data.group_notes||[]){sheet.groupStart.push(acc);acc+=n}
+  if(svg)fitGlyphs(svg);
+  layoutSheet();
+}
+function fitGlyphs(svg){ /* 글꼴 기호(높은음자리표·쉼표·박자표 숫자)를 실제 잉크 크기로 맞춘다 */
+  const ctx=document.createElement("canvas").getContext("2d"),REF=200,cache={};
+  for(const t of svg.querySelectorAll("text.glyph")){
+    const fam=t.getAttribute("font-family"),weight=t.getAttribute("font-weight")||"400",key=weight+"|"+fam+"|"+t.textContent;
+    let m=cache[key];
+    if(!m){ctx.font=weight+" "+REF+"px "+fam;const r=ctx.measureText(t.textContent);m=cache[key]={asc:r.actualBoundingBoxAscent/REF,desc:r.actualBoundingBoxDescent/REF,left:r.actualBoundingBoxLeft/REF,right:r.actualBoundingBoxRight/REF}}
+    const ink=m.asc+m.desc;if(!(ink>0))continue;
+    const size=+t.dataset.h/ink; /* 잉크 높이가 data-h, 잉크 가운데가 (data-cx, data-cy) 가 되게 */
+    t.setAttribute("font-size",size.toFixed(2));
+    t.setAttribute("y",(+t.dataset.cy+(m.asc-m.desc)/2*size).toFixed(2));
+    t.setAttribute("x",(+t.dataset.cx-(m.right-m.left)/2*size).toFixed(2));
+  }
+}
+function layoutSheet(){ /* 4줄까지는 한 화면에 다 들어가게 악보 크기를 맞춘다 */
+  const view=$("sheetView"),svg=sheet.svg,d=sheet.data;if(!svg||!d||!d.lines||!view.clientHeight)return;
+  const cs=getComputedStyle(view),padV=parseFloat(cs.paddingTop)+parseFloat(cs.paddingBottom),padH=parseFloat(cs.paddingLeft)+parseFloat(cs.paddingRight);
+  const visible=Math.min(d.lines,4);
+  const scale=Math.max(.1,Math.min((view.clientWidth-padH)/d.width,(view.clientHeight-padV-2)/(visible*d.line_height)));
+  sheet.scale=scale;svg.style.width=(d.width*scale).toFixed(1)+"px";svg.style.height=(d.height*scale).toFixed(1)+"px";
+}
+function setOn(e,on){if(e.on!==on){e.on=on;if(e.el)e.el.classList.toggle("on",on)}}
+function setCur(e,cur){if(e.cur!==cur){e.cur=cur;if(e.el)e.el.classList.toggle("cur",cur)}}
+function setWipe(ln,x){const w=Math.max(0,x-ln.x0);if(Math.abs(w-ln.w)<.05)return;ln.w=w;if(ln.rect)ln.rect.setAttribute("width",w.toFixed(1))}
+function lineX(ln,t){ /* 기준점(음표 시작 시각, 머리 위치) 사이를 직선으로 잇는다 */
+  const a=ln.anchors;if(!a.length)return ln.x0;if(t<=a[0][0])return a[0][1];
+  for(let i=1;i<a.length;i++)if(t<a[i][0]){const p=a[i-1],q=a[i];return p[1]+(q[1]-p[1])*(t-p[0])/(q[0]-p[0])}
+  return a[a.length-1][1];
+}
+function resetSheet(){
+  for(const ln of sheet.lines)setWipe(ln,ln.x0);
+  for(const e of sheet.events){setOn(e,false);setCur(e,false)}
+  sheet.ptr=0;sheet.practiceDone=-1;sheet.followed=-1;$("sheetView").scrollTop=0;
+}
+function followLine(k){ /* 줄이 넘치는 긴 곡: 지금 줄 위에 한 줄만 남기고 따라 내려간다 */
+  if(k<0||k===sheet.followed)return;sheet.followed=k;
+  const view=$("sheetView");if(view.scrollHeight<=view.clientHeight+1)return;
+  view.scrollTo({top:Math.max(0,(k-1)*sheet.data.line_height*sheet.scale),behavior:"smooth"});
+}
+function sheetFrame(){
+  const s=lastState;if(!s||!s.sheet||!sheet.lines.length)return;
+  const session=s.state==="idle"?null:s.start_at; // 새 세션이면 칠을 지운다
+  if(session!==sheet.session){resetSheet();sheet.session=session}
+  if(s.show_hint===false||session==null)return;
+  const active=s.state==="countdown"||s.state==="playing";
+  if(s.practice){if(active)practiceFrame(s);return}
+  if(!active)return; // 끝나거나 중단되면 그 자리에서 멈춘다
+  const t=(serverNow()-s.start_at)*(s.effective_speed||1); // 악보상 초
+  if(t<0)return;
+  let current=sheet.lines.length-1;
+  sheet.lines.forEach((ln,k)=>{
+    if(t>=ln.t1)setWipe(ln,ln.x1);
+    else if(t<ln.t0)setWipe(ln,ln.x0);
+    else{setWipe(ln,lineX(ln,t));current=Math.min(current,k)}
+  });
+  const ev=sheet.events;
+  while(sheet.ptr<ev.length&&ev[sheet.ptr].t<=t+1e-6){setOn(ev[sheet.ptr],true);sheet.ptr++}
+  followLine(current);
+}
+function practiceFrame(s){
+  const doneNotes=(s.progress&&s.progress.index)||0,playing=s.state==="playing";
+  const key=doneNotes+(playing?.5:0);if(key===sheet.practiceDone)return;sheet.practiceDone=key;
+  const notes=(sheet.data&&sheet.data.group_notes)||[];let done=0;
+  while(done<notes.length&&sheet.groupStart[done]+notes[done]<=doneNotes)done++;
+  let line=-1;
+  for(const e of sheet.events){setOn(e,e.group<done);const cur=playing&&e.group===done;setCur(e,cur);if(cur&&line<0)line=e.line}
+  followLine(line);
+}
+function countdownFrame(){ /* 카운트다운 숫자를 폴링(0.6초) 대신 서버 시계로 센다 */
+  const s=lastState;if(!s||s.state!=="countdown"||s.start_at==null)return;
+  const el=$("countdownNum"),left=s.start_at-serverNow();
+  if(left<=0){if(el.style.display!=="none")el.style.display="none";return}
+  const n=String(Math.ceil(left/(s.count_step||1)-1e-6));
+  if(el.style.display!=="flex")el.style.display="flex";if(el.textContent!==n)el.textContent=n;
+}
+function clockFrame(){try{countdownFrame();sheetFrame()}catch(e){}requestAnimationFrame(clockFrame)}
+requestAnimationFrame(clockFrame);
+if(window.ResizeObserver)new ResizeObserver(()=>layoutSheet()).observe($("sheetView"));else window.addEventListener("resize",layoutSheet);
 (function(){ /* 하단 LIVE FEEDBACK 패널: 높이 조절 / 최소화 */
   const ws=document.querySelector(".workspace"),handle=$("fbResize"),btn=$("fbToggle");
   const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};

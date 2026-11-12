@@ -648,6 +648,7 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
     """카메라 루프. view/manager 가 없으면 악보를 자유 재생한다.
 
     settings 가 있으면 F 로 바꾼 카메라 방향을 저장한다.
+    끝난 이유를 돌려준다: "camera"(영상이 끊김) 또는 "quit"(창에서 ESC).
     """
     matrix = get_matrix(calibration_points)
     tracker = MarkerTracker()
@@ -666,7 +667,7 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
         ret, frame = cap.read()
 
         if not ret:
-            break
+            return "camera"
 
         # 브라우저 영상은 창이 없어 V 키를 못 받는다 — 웹 UI 의 보기 선택을 따른다.
         if web_video and manager is not None:
@@ -867,7 +868,7 @@ def run_ar_loop(cap, calibration_points, view=None, manager=None,
         key = cv2.waitKey(1) & 0xFF
 
         if key == 27:
-            break
+            return "quit"
 
         if key in (ord("v"), ord("V")):
             full_view = not full_view
@@ -997,6 +998,15 @@ def parse_args():
     parser.add_argument("--no-feedback", action="store_true",
                         help="[실험용] 실시간 피드백(색 변화·틀림 메시지) "
                              "끄기. 건반 소리·최종 점수는 유지")
+    parser.add_argument("--metronome", action="store_true",
+                        help="[실험용] 메트로놈 — 카운트다운 대신 곡 템포로 "
+                             "카운트인을 세고 연주 내내 박을 울린다. 일반 "
+                             "모드에서만 동작하고 채점은 그대로")
+    parser.add_argument("--sheet", action="store_true",
+                        help="[실험용] 악보 보기로 시작 — 웹 UI 의 AR 영상 자리에 "
+                             "오선 악보를 띄우고, 판정 시계에 맞춰 지나간 자리를 "
+                             "빨갛게 칠한다. 웹 화면 VIEW 의 '악보' 버튼으로도 "
+                             "켜고 끌 수 있다. 채점은 그대로")
     parser.add_argument("--no-serve", action="store_true",
                         help="웹 UI·세션 없이 악보만 자유 재생")
     parser.add_argument("--list-midi", action="store_true",
@@ -1030,6 +1040,7 @@ Keymento 실행 안내
 
   run base         AR 기준음 잡기 (건반 맨 왼쪽 키를 눌러 맞춤) ★처음 한 번
   run ports        연결된 MIDI 입력 포트 목록
+  run setup        실행 환경만 준비 (가상환경·패키지 설치/점검) — 새 PC 미리 세팅
   run help         이 안내
 
   demo / selftest 는 '자동'입니다. 건반을 쳐도 반영되지 않습니다.
@@ -1047,7 +1058,11 @@ Keymento 실행 안내
 무엇을 켜고 꺼야 하나
 ---------------------
   아무것도 안 켜도 됩니다.
-    - venv       run.bat 이 알아서 씁니다
+    - 파이썬·패키지  run.bat 이 처음 실행할 때 .venv 를 만들고 requirements.txt
+                    를 설치합니다 (인터넷 필요, 몇 분). 파이썬은 3.12 권장 —
+                    3.13 이상은 python-rtmidi 설치 파일이 없어 3.12 이하를 먼저
+                    고르고, 3.9~3.10 이면 실행에 필요한 패키지만 맞는 버전으로 깝니다.
+                    다른 파이썬을 쓰려면 KEYMENTO_PYTHON 에 python.exe 경로
     - MIDI 포트  기본 auto 가 진짜 건반을 찾습니다 (loopMIDI 는 건너뜀)
     - 브라우저   시작하면 자동으로 열립니다
     - loopMIDI   run test / run demo 를 쓰면 아예 필요 없습니다
@@ -1060,6 +1075,8 @@ Keymento 실행 안내
 ---------------
   1. 브라우저가 자동으로 열립니다
   2. 곡 · 모드(연습/일반) · 속도를 고르고 [연주 시작]
+     - VIEW 줄의 '악보'를 누르면 AR 영상 대신 오선 악보가 뜨고, 연주가
+       진행되는 자리가 빨갛게 칠해집니다 (실험용 악보 조건, 연주 중에도 전환)
   3. 카운트다운 뒤, 쳐야 할 건반이 AR 화면에 표시됩니다
      - 연습 모드: 맞출 때까지 그 건반이 계속 맥동합니다
      - 일반 모드: 악보 시간대로 마커가 흘러갑니다
@@ -1277,14 +1294,33 @@ def make_demo_factory(wrong_every):
     return factory
 
 
+def _keymento_running(port):
+    """이 포트에서 Keymento 웹 UI 가 이미 응답하는가."""
+    try:
+        import json
+        import urllib.request
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state",
+                                    timeout=1.5) as resp:
+            return "songs" in json.load(resp)
+    except Exception:  # noqa: BLE001 — 응답이 없거나 다른 프로그램이면 아니다
+        return False
+
+
 def start_web_ui(manager, args):
     """웹 UI 서버를 백그라운드 스레드로 띄운다. (server, url) 반환."""
     try:
         server = create_server(manager, args.host, args.port)
     except OSError as exc:
-        print(f"포트 {args.port} 바인딩 실패: {exc}")
-        print("이미 서버가 떠 있다면 --no-serve 로 실행하거나 "
-              "--port 로 다른 포트를 지정하세요.")
+        if _keymento_running(args.port):
+            # 먼저 켜 둔 창이 남아 있으면 브라우저는 그 (예전) 프로그램에
+            # 붙는다 — 새로 고친 기능이 안 되는 것처럼 보이므로 분명히 알린다.
+            print(f"\n[!] Keymento 가 이미 실행 중입니다: http://localhost:{args.port}/")
+            print("    먼저 켜 둔 Keymento 창을 닫고 다시 실행하세요.")
+            print("    (예전 창이 남아 있으면 새로 고친 기능이 반영되지 않습니다)")
+        else:
+            print(f"포트 {args.port} 바인딩 실패: {exc}")
+            print("다른 프로그램이 이 포트를 쓰고 있습니다. "
+                  "--port 로 다른 포트를 지정하세요.")
         return None, None
 
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -1324,6 +1360,20 @@ def print_banner(args):
         print("  ※ 데모입니다 — 건반을 쳐도 반영되지 않습니다.")
         print("     직접 치려면:  run        (카메라 O)")
         print("                  run nocam  (카메라 X)")
+
+
+def continue_without_camera(manager, url, demo, why):
+    """카메라가 없어도 웹 UI 는 계속 쓰게 한다.
+
+    악보 보기·기본 화면·판정은 카메라가 필요 없다. 예전에는 카메라를 못 열거나
+    보정을 취소하면 웹 서버까지 같이 꺼져서, 이미 열린 브라우저 화면이 멈춘 채
+    어떤 버튼도 듣지 않았다(악보 버튼이 안 되는 것처럼 보였다).
+    """
+    manager.video_enabled = False      # 브라우저가 AR 영상 대신 기본/악보 보기로 바뀐다
+    print(f"\n📷 {why}")
+    print("   카메라 없이 계속합니다 — 웹 화면의 VIEW 에서 '악보'나 '기본'으로 보며")
+    print("   그대로 연주할 수 있습니다. AR 이 필요하면 카메라를 확인하고 다시 실행하세요.")
+    run_headless(url, demo)
 
 
 def run_headless(url, demo):
@@ -1412,6 +1462,8 @@ def main():
             sound=not args.no_sound,
             speed_scale=args.speed_scale,
             source_factory=source_factory,
+            metronome=args.metronome,
+            sheet=args.sheet,
         )
         session_flags.SHOW_HINT = not args.no_hint
         session_flags.SHOW_FEEDBACK = not args.no_feedback
@@ -1424,10 +1476,17 @@ def main():
         server, url = start_web_ui(manager, args)
 
         if server is None:
-            return
+            sys.exit(1)     # 실패로 끝내야 더블클릭한 run.bat 창이 멈춰 안내가 보인다
 
         print(f"   속도: 설정 {settings.speed:g}x × 배율 "
               f"{args.speed_scale:g} = {manager.effective_speed:g}x")
+        if args.metronome:
+            print("   🥁 메트로놈 켜짐 — 일반 모드에서 곡 템포로 카운트인 후 "
+                  "박마다 클릭 (채점은 그대로)")
+        if args.sheet:
+            print("   📜 악보 보기로 시작 — 브라우저의 영상 자리에 오선 악보, "
+                  "진행은 빨갛게 (채점은 그대로)")
+        print("   🖥  화면 전환: 웹 화면 VIEW 줄 — AR 영상 / 악보 (연주 중에도 됨)")
 
     cap = None
 
@@ -1437,22 +1496,54 @@ def main():
             run_headless(url, args.demo)
             return
 
-        cap = open_camera(args.camera)
-        cap.rotate_180 = settings.camera_rotate_180
-        points = calibrate(cap, on_switch=cap.switch)
+        # 카메라·보정·AR 루프가 실패해도 웹 UI(악보 보기·판정)는 남겨 둔다.
+        # 웹 UI 가 없는 자유 재생(--no-serve)만 예전처럼 끝낸다.
+        try:
+            cap = open_camera(args.camera)
+            cap.rotate_180 = settings.camera_rotate_180
+            points = calibrate(cap, on_switch=cap.switch)
+        except Exception as exc:  # noqa: BLE001 — 카메라 장치·드라이버 오류 전부
+            if manager is None:
+                raise
+            points, problem = None, f"카메라를 쓰지 못했습니다: {exc}"
+        else:
+            problem = "카메라 보정을 하지 못했습니다 (취소 또는 실패)."
 
         if points is None or len(points) != 4:
             print("Calibration failed or canceled")
+            if manager is None:
+                return
+            if cap is not None:
+                cap.release()
+                cap = None
+            cv2.destroyAllWindows()
+            continue_without_camera(manager, url, args.demo, problem)
             return
 
         print("\nAR 창이 열렸습니다. " + (
             "브라우저에서 곡·모드를 고르고 시작하세요."
             if url else "P 로 악보를 다시 재생합니다."))
 
-        run_ar_loop(cap, points.copy(), view=view, manager=manager,
-                    free_notes=free_notes, url=url, base_note=base_note,
-                    settings=settings,
-                    web_video=manager is not None and manager.video_enabled)
+        try:
+            reason = run_ar_loop(cap, points.copy(), view=view, manager=manager,
+                                 free_notes=free_notes, url=url,
+                                 base_note=base_note, settings=settings,
+                                 web_video=manager is not None
+                                 and manager.video_enabled)
+        except Exception:  # noqa: BLE001 — 원인은 출력하고 웹 UI 는 살린다
+            if manager is None:
+                raise
+            import traceback
+            traceback.print_exc()
+            reason = "error"
+        if reason in ("camera", "error") and manager is not None:
+            cap.release()
+            cap = None
+            cv2.destroyAllWindows()
+            continue_without_camera(
+                manager, url, args.demo,
+                "카메라 영상이 끊겼습니다." if reason == "camera"
+                else "AR 화면에서 오류가 났습니다 (위 메시지 참고).")
     except KeyboardInterrupt:
         print("\n종료합니다.")
     finally:

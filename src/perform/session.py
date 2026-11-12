@@ -58,8 +58,19 @@ SourceClock 으로 PC 시계에 옮겨 쓴다. UDP 소스는 라즈베리파이�
     정확도에 반영) 진행은 시키지 않는다. 화음은 CHORD_WINDOW 안에 모든
     음을 눌러야 통과한다 — 일부만 치고 남은 음을 나중에 따로 쳐서는
     넘어가지 않는다.
+
+■ [실험용] 메트로놈 (metronome=True, 일반 모드만)
+  판정 템포를 소리로 알려 준다(perform/metronome.py). 카운트다운 대신 곡
+  템포로 마디 단위 카운트인을 울리고, 그다음 강박을 곡 시작(start_time)으로
+  삼는다. 연주 중에는 판정 루프가 박마다 클릭을 울린다. 채점은 바뀌지 않는다.
+
+■ 곡 시작 시각 알리기
+  곡 시작 시각(start_time)은 카운트다운을 시작할 때 미리 정하고, countdown
+  이벤트의 start_at 과 start 이벤트의 t0 으로 알린다. 웹 UI 의 악보 보기
+  (perform/sheet.py)가 이 시각으로 진행을 칠한다.
 """
 
+import math
 import os
 import sys
 import time
@@ -88,6 +99,7 @@ from midi.inputs import (  # noqa: E402
     resolve_midi_port,
 )
 from midi.sound import NotePlayer                      # noqa: E402
+from perform.metronome import Metronome                # noqa: E402
 
 # [실험용] 터미널 출력의 안내·실시간 피드백 on/off (main.py --no-hint/--no-feedback)
 SHOW_HINT = True
@@ -627,9 +639,67 @@ class PracticeJudge:
         })
 
 
+def _wait_until(deadline, stopped):
+    """PC 시계 deadline 까지 기다린다. 도중에 중단되면 False."""
+    while True:
+        if stopped():
+            return False
+        left = deadline - time.time()
+        if left <= 0:
+            return True
+        time.sleep(min(left, 0.05))
+
+
+def _run_countdown(countdown, on_event, stopped):
+    """1초 간격 카운트다운. 곡 시작 시각(PC 시계)을 돌려주고, 중단되면 None.
+
+    시작 시각을 처음에 정해 두고 숫자마다 그 기준으로 맞춰 내보낸다 — 잠깐씩
+    늦게 깨어나도 밀림이 쌓이지 않는다. 이벤트의 start_at 이 그 시각이고
+    step 은 숫자 하나가 버티는 시간(초)이다. 웹 UI 는 이 둘로 폴링 간격과
+    상관없이 카운트다운 숫자와 악보 진행을 제때 그린다.
+    """
+    start_at = time.time() + max(countdown, 0)
+    for i in range(countdown, 0, -1):
+        if not _wait_until(start_at - i, stopped):
+            return None
+        print(f"{i}...")
+        _emit(on_event, {"type": "countdown", "seconds": i,
+                         "start_at": start_at, "step": 1.0})
+    if not _wait_until(start_at, stopped):
+        return None
+    return start_at
+
+
+def _run_count_in(metro, on_event, stopped):
+    """메트로놈 카운트인을 울리고 곡 시작 시각(PC 시계)을 돌려준다.
+
+    박마다 countdown 이벤트를 낸다. 화면은 "beats"(남은 박 수)를 띄우고,
+    "seconds" 는 남은 시간을 올림한 값이다. start_at·step 은 _run_countdown
+    과 같다(step 이 1초 대신 한 박). 중단되면 None 을 돌려준다.
+    카운트다운과 마찬가지로 이 동안에는 입력을 읽지 않는다 — 이때 누른
+    건반은 시작 뒤에 원래 타건 시각으로 판정된다.
+    """
+    origin = metro.start(time.time())
+    while True:
+        now = time.time()
+        if now >= origin:
+            return origin
+        if stopped():
+            return None
+        beats_left = metro.tick(now)
+        if beats_left is not None:
+            print(f"{beats_left}...")
+            _emit(on_event, {"type": "countdown",
+                             "seconds": max(1, math.ceil(origin - now)),
+                             "beats": beats_left,
+                             "start_at": origin,
+                             "step": metro.count_in_step})
+        time.sleep(0.001)
+
+
 def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
                   input_source=None, on_event=None, stop_event=None,
-                  practice=False):
+                  practice=False, metronome=False):
     """곡을 연주받아 음정·박자를 판정한다. (judgement.main() 을 파라미터화)
 
     Args:
@@ -643,6 +713,9 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
         stop_event:   threading.Event. set 되면 세션을 중단한다.
         practice:     True 면 연습 모드 — 정답을 칠 때까지 다음 음으로
                       넘어가지 않고, 박자는 판정하지 않는다.
+        metronome:    [실험용] True 면 곡 템포로 카운트인을 울리고(카운트다운
+                      대신, countdown 초 이상) 연주 내내 박을 울린다. 일반
+                      모드에서만 쓴다. 채점은 그대로다.
 
     Returns:
         완주 시 결과 요약 dict, 중단/실패 시 None.
@@ -676,6 +749,21 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
     # 신디사이저로 에코해서 소리를 낸다. 출력 포트가 없으면 무음 진행.
     player = NotePlayer() if sound else None
 
+    # [실험용] 메트로놈. 연습 모드는 악보 시계가 없으니 쓰지 않는다. 건반
+    # 소리를 끈 채(sound=False) 켜면 클릭용 출력만 따로 연다.
+    metro = None
+    click_player = None
+    if metronome and practice:
+        print("🥁 연습 모드에는 악보 시계가 없어 메트로놈을 쓰지 않습니다.")
+    elif metronome:
+        if player is None:
+            click_player = NotePlayer()
+        try:
+            metro = Metronome.for_song(song_path, answers[-1]["time"], speed,
+                                       countdown, player or click_player)
+        except Exception as exc:  # noqa: BLE001 — 메트로놈 없이도 판정은 된다
+            print(f"⚠️  메트로놈을 준비하지 못해 끄고 진행합니다: {exc}")
+
     def _stopped():
         return stop_event is not None and stop_event.is_set()
 
@@ -687,18 +775,26 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
     chord_note = f" · 화음 {chord_count}곳" if chord_count else ""
     print(f"\n🎵 총 {total_notes}개의 노트를 연주해야 합니다. "
           f"(속도 {speed:g}x{chord_note}{mode_note})")
-    print(f"준비하세요! {countdown}초 뒤 연주를 시작합니다...")
+    if metro is None:
+        print(f"준비하세요! {countdown}초 뒤 연주를 시작합니다...")
+    else:
+        print(f"🥁 메트로놈: {metro.describe()}")
+        print(f"준비하세요! 카운트인 {metro.count_in_beats}박 뒤 "
+              f"연주를 시작합니다...")
     result = None
 
     try:
-        for i in range(countdown, 0, -1):
-            if _stopped():
-                _emit(on_event, {"type": "aborted", "index": 0,
-                                 "total": total_notes})
-                return None
-            print(f"{i}...")
-            _emit(on_event, {"type": "countdown", "seconds": i})
-            time.sleep(1)
+        # 곡 시작 시각(판정의 start_time)은 카운트다운을 시작할 때 정해진다.
+        if metro is None:
+            start_time = _run_countdown(countdown, on_event, _stopped)
+        else:
+            # 카운트인이 끝나는 강박이 곧 악보 시각 0 이다. 판정 시계를
+            # 메트로놈과 같은 순간에 맞춘다.
+            start_time = _run_count_in(metro, on_event, _stopped)
+        if start_time is None:
+            _emit(on_event, {"type": "aborted", "index": 0,
+                             "total": total_notes})
+            return None
 
         first_notes = group_notes(0)
         print("\n🎹 [START] 연주 시작!")
@@ -706,9 +802,9 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
         _emit(on_event, {"type": "start", "total": total_notes,
                          "next": _names(first_notes),
                          "next_notes": first_notes,
-                         "practice": practice})
-
-        start_time = time.time()
+                         "practice": practice,
+                         "metronome": metro is not None,
+                         "t0": start_time})   # 판정 시계의 0초 (PC 시계)
 
         def emit(payload):
             _emit(on_event, payload)
@@ -724,6 +820,10 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
                 _emit(on_event, {"type": "aborted", "index": _progress(),
                                  "total": total_notes})
                 return None
+
+            # 박 클릭이 입력 처리에 밀리지 않도록 매 바퀴 먼저 울린다.
+            if metro is not None:
+                metro.tick(time.time())
 
             event = source.poll()
 
@@ -814,6 +914,7 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
 
         result = {
             "mode": "practice" if practice else "normal",
+            "metronome": metro is not None,
             "total": total_notes,
             "total_groups": total_groups,   # 화음을 한 덩어리로 센 박 수
             "chords": chord_count,
@@ -837,6 +938,8 @@ def run_judgement(song_path, speed=1.0, port=0, countdown=20, sound=True,
     finally:
         if player is not None:
             player.close()
+        if click_player is not None:
+            click_player.close()
         if own_source:
             source.close()
 
@@ -920,6 +1023,9 @@ def _parse_args():
                         help="연주 시작 전 카운트다운 초 (기본: 5)")
     parser.add_argument("--no-sound", action="store_true",
                         help="건반 소리 에코 끄기")
+    parser.add_argument("--metronome", action="store_true",
+                        help="[실험용] 곡 템포로 카운트인 + 연주 내내 박 클릭 "
+                             "(일반 모드만, 채점은 그대로)")
     parser.add_argument("--list-ports", action="store_true",
                         help="MIDI 입력 포트 목록만 출력하고 종료")
     return parser.parse_args()
@@ -932,7 +1038,8 @@ def _main():
         _list_midi_ports()
         return
 
-    kwargs = {"countdown": args.countdown, "sound": not args.no_sound}
+    kwargs = {"countdown": args.countdown, "sound": not args.no_sound,
+              "metronome": args.metronome}
     # --practice/--normal 을 안 주면 설정값(settings.practice_mode)을 따른다.
     if args.practice is not None:
         kwargs["practice"] = args.practice

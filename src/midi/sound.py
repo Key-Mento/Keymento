@@ -55,6 +55,11 @@ _CC_ALL_NOTES_OFF = 123         # Control Change 123번 = All Notes Off
 _CHANNEL_MASK = 0x0F            # 채널은 0~15
 _DATA_MASK = 0x7F               # 데이터 바이트(노트/벨로시티/악기)는 7비트
 
+# [실험용] 메트로놈 클릭 — General MIDI 10번 채널(0부터 세면 9)은 타악기다.
+# 종류별 (타악기 번호, 벨로시티): 76 = Hi Wood Block, 77 = Low Wood Block.
+_PERCUSSION_CHANNEL = 9
+_CLICK_NOTES = {"accent": (76, 120), "beat": (77, 100), "sub": (77, 55)}
+
 # 출력 포트 자동 선택 시 우선적으로 찾는 이름 조각 (소문자 비교)
 _PREFERRED_PORT_KEYWORDS = (
     "microsoft gs wavetable",   # Windows 내장 신디사이저
@@ -108,6 +113,17 @@ class _MidiOutBackend:
 
     def all_notes_off(self):
         self._send(_CONTROL_CHANGE, _CC_ALL_NOTES_OFF, 0)
+
+    def click(self, kind="beat"):
+        """메트로놈 클릭. 타악기는 한 번 울리고 끝나므로 바로 꺼도 된다."""
+        spec = _CLICK_NOTES.get(kind)
+        if spec is None:
+            return
+        note, velocity = spec
+        self._midi_out.send_message([_NOTE_ON | _PERCUSSION_CHANNEL,
+                                     note, velocity])
+        self._midi_out.send_message([_NOTE_OFF | _PERCUSSION_CHANNEL,
+                                     note, 0])
 
     def close(self):
         self.all_notes_off()
@@ -173,6 +189,21 @@ class NotePlayer:
     def all_notes_off(self):                            # 울리고 있는 모든 음을 끈다.
         if self._impl is not None:
             self._impl.all_notes_off()
+
+    def click(self, kind="beat"):                       # [실험용] 메트로놈 클릭 (accent/beat/sub)
+        if self._impl is not None:
+            self._impl.click(kind)
+
+    @property
+    def output_latency(self):
+        """소리가 실제로 들리기까지의 지연(초). 모르면 0.
+
+        메트로놈이 그만큼 일찍 울려서 들리는 시각을 박에 맞춘다. 내장 신디는
+        장치가 알려 준 값을 쓰고, MIDI 포트는 지연을 알 수 없어 0 으로 둔다.
+        """
+        if self.backend == "synth" and self._impl is not None:
+            return self._impl.latency_ms / 1000.0
+        return 0.0
 
     def close(self):                                    # 울리는 음을 정리하고 백엔드를 닫는다.
         if self._impl is None:

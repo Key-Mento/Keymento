@@ -4,8 +4,11 @@ __pycache__/
 *.pyo
 *.pyd
 
-# 가상환경
+# 가상환경 (run.bat 이 만들거나, 못 쓰는 것을 -unused-NNNN 으로 치워 둔다)
 venv/
+.venv/
+.venv-unused-*/
+venv-unused-*/
 .env/
 
 # VS Code 설정

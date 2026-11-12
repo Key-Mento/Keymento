@@ -17,6 +17,9 @@ API:
     POST /api/mode    {"practice": true | false}
     POST /api/start   판정 세션 시작 (백그라운드 스레드)
     POST /api/stop    실행 중인 세션 중단
+    POST /api/view    {"view": "crop"|"full"|"flat"|"sheet"|"basic"} 무대 보기
+                      (AR 영상 자르기 / [실험용] 악보 / 카메라 없을 때 기본 화면)
+    GET  /api/sheet   [실험용] 선택한 곡의 오선 악보 (perform/sheet.py)
 """
 
 import argparse
@@ -36,8 +39,15 @@ if _SRC_DIR not in sys.path:
 from settings import Settings, SPEED_PRESETS, INPUT_SOURCES  # noqa: E402
 from midi.inputs import create_input_source, UDP_DEFAULT_PORT  # noqa: E402
 from perform.session import run_judgement                    # noqa: E402
+from perform.sheet import build_sheet                        # noqa: E402
 
 _INDEX_PATH = Path(__file__).resolve().parent / "index.html"
+
+# 웹 API 판. 서버와 웹 페이지(index.html 의 API_VERSION)에서 같이 올린다.
+# 페이지는 파일에서 매번 새로 읽히지만 서버는 켤 때의 코드로 돌기 때문에,
+# 실행 중에 코드가 바뀌면 둘이 어긋난다 — 페이지가 이 값을 보고 '다시 실행'
+# 안내를 띄우거나(서버가 예전 것), 스스로 새로 고친다(페이지가 예전 것).
+API_VERSION = 3
 
 # 세션 진행 상태의 초기값. AR 창(piano-ar/main.py)이 매 프레임 읽으므로
 # 키가 빠지는 일이 없도록 한 곳에서 모양을 정해 둔다.
@@ -52,12 +62,17 @@ class SessionManager:
 
     def __init__(self, settings, midi_port=0, udp_port=UDP_DEFAULT_PORT,
                  countdown=5, sound=True, speed_scale=1.0,
-                 source_factory=None):
+                 source_factory=None, metronome=False, sheet=False):
         self.settings = settings
         self.midi_port = midi_port
         self.udp_port = udp_port
         self.countdown = countdown
         self.sound = sound
+        # [실험용] 곡 템포 카운트인 + 박 클릭 (일반 모드에서만 동작)
+        self.metronome = metronome
+        # [실험용] 웹 UI 의 영상 자리에 계이름 악보를 띄우고 진행을 칠한다
+        self.sheet = sheet
+        self._sheet_cache = None         # (경로, 수정 시각, 악보 dict)
         # 입력 소스를 직접 만들어 주는 함수 (song, speed, practice)
         # -> MidiInputSource. None 이면 설정(local/udp)대로 만든다.
         # 건반 없이 돌리는 데모 모드가 이 자리에 자기 소스를 끼운다.
@@ -84,6 +99,11 @@ class SessionManager:
         # UI 표시용 상태 (폴링 응답에 그대로 나감)
         self.state = "idle"   # idle|countdown|playing|done|aborted|error
         self.countdown_left = 0
+        # 판정 시계의 0초(PC 시계)와 카운트다운 숫자 하나의 길이(초).
+        # 세션이 카운트다운을 시작할 때 알려 준다 — 브라우저가 폴링 간격과
+        # 상관없이 카운트다운 숫자와 악보 진행을 제때 그리는 데 쓴다.
+        self.start_at = None
+        self.count_step = None
         self.progress = dict(_EMPTY_PROGRESS)
         # 일반 모드에서 이미 친 음 {(덩어리 번호, MIDI 음): (등급, 반영 시각)}.
         # AR 이 친 음의 마커를 지우고 등급 색으로 잠깐 번쩍인다. progress
@@ -121,6 +141,8 @@ class SessionManager:
             "running": self.running(),
             "state": self.state,
             "countdown": self.countdown_left,
+            "start_at": self.start_at,
+            "count_step": self.count_step,
             "progress": dict(self.progress),
             "active_practice": self.active_practice,
             "result": self.result,
@@ -146,6 +168,8 @@ class SessionManager:
             self._stop.clear()
             self.state = "countdown"
             self.countdown_left = self.countdown
+            self.start_at = None
+            self.count_step = None
             self.progress = dict(_EMPTY_PROGRESS)
             self.hits = {}
             self.result = None
@@ -159,6 +183,29 @@ class SessionManager:
     def stop(self):
         self._stop.set()
 
+    def display_view(self):
+        """브라우저 무대에 지금 무엇이 보이는가: sheet / ar-crop·ar-full·ar-flat / basic."""
+        if self.sheet:
+            return "sheet"
+        if self.video_enabled:
+            return "ar-" + self.video_view
+        return "basic"
+
+    def sheet_for_selected(self):
+        """[실험용] 선택한 곡의 계이름 악보. 곡 파일이 그대로면 다시 계산하지 않는다."""
+        song = self.settings.get_selected_song()
+        if song is None:
+            songs = self.settings.list_songs()
+            if not songs:
+                raise ValueError("songs/ 폴더에 곡이 없습니다.")
+            song = songs[0]
+        mtime = os.path.getmtime(song.path)
+        cached = self._sheet_cache
+        if cached is None or cached[0] != song.path or cached[1] != mtime:
+            cached = (song.path, mtime, build_sheet(song.path))
+            self._sheet_cache = cached
+        return {"song": song.id, "name": song.name, **cached[2]}
+
     @property
     def effective_speed(self):
         """세션에 실제로 넘어가는 속도 (설정값 × 배율)."""
@@ -167,6 +214,10 @@ class SessionManager:
     # ── 내부 동작 ─────────────────────────────────────────────────
     def _push(self, event):
         """세션 이벤트를 저장하고 UI 상태 필드에 반영한다."""
+        if event.get("type") == "start":
+            # 시선 녹화 로그에서 어느 화면(AR 영상 / 악보)으로 친 시도인지
+            # 알 수 있게 시작 순간의 보기를 남긴다.
+            event = {**event, "view": self.display_view()}
         with self._lock:
             self._seq += 1
             self._events.append((self._seq, event))
@@ -174,10 +225,15 @@ class SessionManager:
             kind = event.get("type")
             if kind == "countdown":
                 self.state = "countdown"
-                self.countdown_left = event["seconds"]
+                # 메트로놈 카운트인은 초 대신 남은 박 수를 띄운다 — 숫자가
+                # 클릭과 함께 바뀌어야 박을 셀 수 있다.
+                self.countdown_left = event.get("beats", event["seconds"])
+                self.start_at = event.get("start_at", self.start_at)
+                self.count_step = event.get("step", self.count_step)
             elif kind == "start":
                 self.state = "playing"
                 self.countdown_left = 0
+                self.start_at = event.get("t0", self.start_at)
                 self.progress = dict(
                     _EMPTY_PROGRESS,
                     total=event["total"],
@@ -239,6 +295,7 @@ class SessionManager:
                 on_event=self._push,
                 stop_event=self._stop,
                 practice=self.settings.practice_mode,
+                metronome=self.metronome,
             )
         except Exception as exc:  # noqa: BLE001
             self._push({"type": "error", "message": str(exc)})
@@ -289,8 +346,13 @@ def _make_handler(manager: SessionManager):
                 # [실험용] 웹 UI 의 다음 음 안내 / 실시간 피드백 표시 여부
                 "show_hint": getattr(manager, "show_hint", True),
                 "show_feedback": getattr(manager, "show_feedback", True),
+                "metronome": manager.metronome,
+                "sheet": manager.sheet,
                 "video_enabled": manager.video_enabled,
                 "video_view": manager.video_view,
+                # 브라우저가 서버 시계와의 차이를 재는 데 쓴다(start_at 이 서버 시계).
+                "server_time": time.time(),
+                "api": API_VERSION,
             }
             payload.update(manager.snapshot(since))
             return payload
@@ -313,6 +375,12 @@ def _make_handler(manager: SessionManager):
                         except ValueError:
                             pass
                 self._send_json(self._state_payload(since))
+            elif path == "/api/sheet":
+                try:
+                    settings.refresh_songs()
+                    self._send_json(manager.sheet_for_selected())
+                except Exception as exc:  # noqa: BLE001 — 악보 오류는 화면에 띄운다
+                    self._send_json({"error": str(exc)}, status=500)
             else:
                 self.send_error(404)
 
@@ -381,10 +449,19 @@ def _make_handler(manager: SessionManager):
                 elif self.path == "/api/mode":
                     settings.set_practice_mode(bool(data.get("practice")))
                 elif self.path == "/api/view":
+                    # 영상 보기(crop/full/flat), [실험용] 악보(sheet), 카메라 없을 때의
+                    # 기본 화면(basic). 화면 표시만 바꾸고 판정에는 영향이 없어서
+                    # 연주 중에도 바꿀 수 있다.
                     view = str(data.get("view"))
-                    if view not in ("crop", "full", "flat"):
+                    if view == "sheet":
+                        manager.sheet = True
+                    elif view in ("crop", "full", "flat"):
+                        manager.sheet = False
+                        manager.video_view = view
+                    elif view == "basic":
+                        manager.sheet = False
+                    else:
                         raise ValueError("알 수 없는 보기: " + view)
-                    manager.video_view = view
                 elif self.path == "/api/start":
                     ok, error = manager.start()
                     if not ok:
@@ -420,13 +497,28 @@ def _make_handler(manager: SessionManager):
     return _Handler
 
 
+class _WebServer(ThreadingHTTPServer):
+    """같은 포트로 두 번 뜨지 않는 웹 서버.
+
+    파이썬 HTTP 서버는 SO_REUSEADDR 를 켜는데, 윈도우에서는 이 옵션이 이미 다른
+    서버가 듣고 있는 포트도 또 열게 해 준다. 그러면 Keymento 를 끄지 않은 채 한 번
+    더 실행했을 때 두 서버가 한 포트를 나눠 받고, 브라우저가 예전 프로그램에 붙어
+    새 기능이 안 되는 것처럼 보인다. 윈도우에서는 이 옵션을 꺼서 두 번째 실행이
+    OSError 로 바로 실패하게 한다(main.py 가 '이미 실행 중'이라고 알린다). 윈도우는
+    이 옵션 없이도 끄자마자 다시 열 수 있지만, 다른 OS 는 아니라서 그대로 켠다.
+    """
+
+    allow_reuse_address = os.name != "nt"
+
+
 def create_server(manager, host="0.0.0.0", port=8321):
     """세션 매니저에 묶인 HTTP 서버를 만든다(아직 돌리지는 않는다).
 
     AR 창(piano-ar/main.py)이 같은 매니저를 공유한 채 서버를 별도
-    스레드로 띄우기 위한 진입점이다. 바인딩 실패는 OSError 로 나간다.
+    스레드로 띄우기 위한 진입점이다. 바인딩 실패(이미 실행 중 포함)는
+    OSError 로 나간다.
     """
-    return ThreadingHTTPServer((host, port), _make_handler(manager))
+    return _WebServer((host, port), _make_handler(manager))
 
 
 def parse_args():
@@ -443,6 +535,12 @@ def parse_args():
                         help="연주 시작 전 카운트다운 초 (기본: 5)")
     parser.add_argument("--no-sound", action="store_true",
                         help="건반 소리 에코 끄기")
+    parser.add_argument("--metronome", action="store_true",
+                        help="[실험용] 곡 템포로 카운트인 + 연주 내내 박 클릭 "
+                             "(일반 모드만, 채점은 그대로)")
+    parser.add_argument("--sheet", action="store_true",
+                        help="[실험용] 영상 자리에 계이름 악보를 띄우고 "
+                             "판정 시계에 맞춰 진행을 빨갛게 칠하기")
     return parser.parse_args()
 
 
@@ -455,6 +553,8 @@ def main():
         udp_port=args.udp_port,
         countdown=args.countdown,
         sound=not args.no_sound,
+        metronome=args.metronome,
+        sheet=args.sheet,
     )
 
     try:

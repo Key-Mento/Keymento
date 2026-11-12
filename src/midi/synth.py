@@ -57,6 +57,19 @@ SUSTAIN_TAU = 2.4           # 누르고 있는 동안의 감쇠 시정수(초) �
 RELEASE_TAU = 0.12          # 건반을 뗀 뒤의 감쇠 시정수(초)
 SILENCE_LEVEL = 1e-4        # 이보다 작아진 보이스는 제거한다
 
+# [실험용] 메트로놈 클릭(perform/metronome.py). 피아노 음과 섞여도 헷갈리지
+# 않게 짧은 '톡' 소리로 만든다 — 고음 사인에 비정수배 배음을 얹어 나무토막
+# 같은 음색을 내고 수십 ms 안에 사라지게 한다.
+# 종류별 (기본 주파수 Hz, 음량, 감쇠 시정수 초). 강박은 높고 크게, 보조 클릭은 작게.
+CLICK_VOICES = {
+    "accent": (1760.0, 1.4, 0.012),
+    "beat": (1175.0, 1.0, 0.010),
+    "sub": (1175.0, 0.4, 0.008),
+}
+CLICK_OVERTONE = (2.76, 0.35)   # 얹는 배음 (기본 주파수의 배수, 상대 진폭)
+CLICK_SEC = 0.08                # 클릭 파형 길이(초)
+CLICK_ATTACK_SEC = 0.0005       # 시작 램프 — 0 이면 잡음 섞인 '딱' 소리가 된다
+
 _TWO_PI = 2.0 * math.pi
 
 # 우선적으로 여는 호스트 API (소문자 부분 일치).
@@ -128,6 +141,60 @@ class _Voice:
         )
 
 
+def _click_wave(samplerate, freq, gain, tau):
+    """메트로놈 클릭 파형 하나를 미리 만든다."""
+    frames = max(int(CLICK_SEC * samplerate), 1)
+    t = np.arange(frames, dtype=np.float64) / samplerate
+    envelope = np.exp(-t / tau)
+    ramp = min(frames, max(int(CLICK_ATTACK_SEC * samplerate), 1))
+    envelope[:ramp] *= np.arange(ramp) / ramp
+    mult, rel = CLICK_OVERTONE
+    tone = (np.sin(_TWO_PI * freq * t)
+            + rel * np.sin(_TWO_PI * freq * mult * t))
+    return gain * envelope * tone
+
+
+class _ClickTrack:
+    """메트로놈 클릭을 블록마다 섞는다.
+
+    trigger 는 판정 세션 스레드, mix_into 는 오디오 콜백 스레드에서 불린다.
+    노트 명령처럼 deque 하나로만 넘기므로 락이 필요 없다. 블록 중간에
+    들어온 클릭은 다음 블록 처음부터 울린다(최대 1블록 ≈ 3ms 늦음 —
+    SoftSynth.latency_ms 에 이미 들어 있다).
+    """
+
+    def __init__(self, samplerate):
+        self._waves = {kind: _click_wave(samplerate, *spec)
+                       for kind, spec in CLICK_VOICES.items()}
+        self._queue = collections.deque()
+        self._active = []                   # [파형, 위치] — 오디오 스레드 전용
+
+    def trigger(self, kind):
+        wave = self._waves.get(kind)
+        if wave is not None:
+            self._queue.append(wave)
+
+    def mix_into(self, buffer):
+        while True:
+            try:
+                self._active.append([self._queue.popleft(), 0])
+            except IndexError:
+                break
+        if not self._active:
+            return
+
+        frames = len(buffer)
+        playing = []
+        for item in self._active:
+            wave, pos = item
+            n = min(frames, len(wave) - pos)
+            buffer[:n] += wave[pos:pos + n]
+            item[1] = pos + n
+            if item[1] < len(wave):
+                playing.append(item)
+        self._active = playing
+
+
 class SoftSynth:
     """오디오 장치로 직접 파형을 내보내는 폴리포닉 신디사이저.
 
@@ -152,6 +219,7 @@ class SoftSynth:
         self._curve_cache = {}                   # frames → (감쇠커브, 위상스텝)
         self._attack_samples = 1
         self._stream = None
+        self._click_track = None                 # 장치를 연 뒤 샘플레이트에 맞춰 만든다
 
         candidates = [device] if device is not None else _device_candidates()
         errors = []
@@ -168,6 +236,7 @@ class SoftSynth:
     def _open(self, device):
         samplerate = (self._forced_samplerate
                       or _device_samplerate(device))
+        click_track = _ClickTrack(samplerate)
         stream = _sd.OutputStream(
             samplerate=samplerate,
             blocksize=self.blocksize,
@@ -185,6 +254,7 @@ class SoftSynth:
         self.samplerate = samplerate
         self._attack_samples = max(int(ATTACK_SEC * samplerate), 1)
         self._curve_cache.clear()
+        self._click_track = click_track
 
     # ── 공개 API (세션 스레드에서 호출) ──────────────────────────────
     @property
@@ -214,6 +284,12 @@ class SoftSynth:
 
     def all_notes_off(self):
         self._commands.append((False, None, 0))     # None = 전체
+
+    def click(self, kind="beat"):
+        """[실험용] 메트로놈 클릭 — kind 는 accent / beat / sub."""
+        track = self._click_track
+        if track is not None:
+            track.trigger(kind)
 
     def close(self):
         stream = getattr(self, "_stream", None)
@@ -314,6 +390,10 @@ class SoftSynth:
 
         for voice in finished:
             self._voices.remove(voice)
+
+        track = self._click_track
+        if track is not None:
+            track.mix_into(buffer)
 
         # 화음에서 진폭이 더해져 넘치는 것을 tanh 로 부드럽게 눌러 준다.
         # (작은 값에서는 거의 그대로 통과하므로 음색을 해치지 않는다)
